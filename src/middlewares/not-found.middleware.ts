@@ -11,6 +11,7 @@ export const notFoundMiddleware = (
     res,
     404,
     false,
-    `Route not found: ${req.method} ${req.originalUrl}`,
+    // `Route not found: ${req.method} ${req.originalUrl}`,
+    "Route not found",
   );
 };

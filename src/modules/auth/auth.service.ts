@@ -44,6 +44,7 @@ export const adminLogin = async (email: string, password: string) => {
         id: admin.id,
         email: admin.email,
         name: admin.name,
+        role: admin.role,
       },
     };
   } catch (error) {

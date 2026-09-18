@@ -10,24 +10,27 @@ export const getAdmins = async (
 ) => {
   const skip = (page - 1) * limit;
 
-  const where = search
-    ? {
-        OR: [
-          {
-            name: {
-              contains: search,
-              mode: "insensitive" as const,
+  const where = {
+    role: "ADMIN" as const,
+    ...(search
+      ? {
+          OR: [
+            {
+              name: {
+                contains: search,
+                mode: "insensitive" as const,
+              },
             },
-          },
-          {
-            email: {
-              contains: search,
-              mode: "insensitive" as const,
+            {
+              email: {
+                contains: search,
+                mode: "insensitive" as const,
+              },
             },
-          },
-        ],
-      }
-    : undefined;
+          ],
+        }
+      : {}),
+  };
 
   const [users, total] = await Promise.all([
     prisma.admin.findMany({

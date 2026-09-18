@@ -100,7 +100,10 @@ export const createUser = async (data: CreateUserData) => {
   }
 
   return prisma.user.create({
-    data,
+    data: {
+      ...data,
+      profileComplete: true,
+    },
     omit: {
       accessToken: true,
     },
