@@ -58,6 +58,10 @@ export const adminAuthMiddleware = async (
 
     next();
   } catch (error) {
+    if (error instanceof jwt.TokenExpiredError) {
+      return next(new AppError(401, "Session expired"));
+    }
+
     next(error);
   }
 };

@@ -45,3 +45,93 @@ enum AdminRole {
   ADMIN
   SUPER_ADMIN
 }
+
+model Subject {
+  id        String   @id @default(uuid())
+  name      String
+  slug      String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  classes AcademicClass[]
+}
+
+model AcademicClass {
+  id        String   @id @default(uuid())
+  name      String
+  slug      String
+
+  subjectId String
+  subject   Subject @relation(fields: [subjectId], references: [id])
+
+  chapters Chapter[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([subjectId, slug])
+  @@index([subjectId])
+}
+
+model Chapter {
+  id        String   @id @default(uuid())
+  name      String
+  slug      String
+  order     Int
+
+  classId String
+  class   AcademicClass @relation(fields: [classId], references: [id])
+
+  audioLectures AudioLecture[]
+  keywordRevisions KeywordRevision[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([classId, slug])
+  @@index([classId])
+}
+
+model AudioLecture {
+  id          String  @id @default(uuid())
+  title       String
+  slug        String
+  description String?
+
+  audioKey  String
+  duration  Int
+  order Int
+
+  chapterId String
+  chapter   Chapter @relation(fields: [chapterId], references: [id])
+
+  isActive Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([chapterId, slug])
+  @@index([chapterId])
+}
+
+model KeywordRevision {
+  id          String  @id @default(uuid())
+  title       String
+  slug        String
+  description String?
+
+  audioKey  String
+  duration  Int
+  order Int
+
+  chapterId String
+  chapter   Chapter @relation(fields: [chapterId], references: [id])
+
+  isActive Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([chapterId, slug])
+  @@index([chapterId])
+}

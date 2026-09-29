@@ -5,7 +5,7 @@ import prisma from "../config/prisma.js";
 const createSuperAdmin = async () => {
   try {
     const email = "superadmin@gmail.com";
-    const password = "admin123";
+    const password = "Super@123";
 
     const existing = await prisma.admin.findUnique({
       where: { email },
