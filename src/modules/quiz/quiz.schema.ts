@@ -1,6 +1,5 @@
 import { z } from "zod";
-
-import { QuizType } from "../../generated/prisma/enums.js";
+import { QuizType, QuestionType } from "../../generated/prisma/enums.js";
 
 // Clients that build payloads dynamically tend to send null or "" for values
 // they mean to leave untouched. z.coerce.number() turns null into 0, which
@@ -14,6 +13,14 @@ const optionalMarks = z.preprocess(
 // the quiz from its chapter. It is kept in the payload so the service can
 // reject it for CHAPTER quizzes instead of silently ignoring the field.
 const nullableUuid = z.uuid("Invalid chapter ID").nullable().optional();
+
+const questionContentSchema = z.object({
+  blocks: z.array(
+    z.object({
+      type: z.string(),
+    }),
+  ),
+});
 
 export const createQuizSchema = z
   .object({
@@ -85,18 +92,21 @@ export const getQuizzesSchema = z.object({
     .optional(),
 });
 
-
 export const createQuestionSchema = z.object({
-  question: z.string().min(1, "Question is required"),
+  type: z.enum(QuestionType).default(QuestionType.SINGLE_CHOICE),
 
-  explanation: z.string().optional(),
+  question: z.string().trim().min(1, "Question is required"),
+
+  explanation: z.string().trim().optional(),
+
+  content: questionContentSchema.optional(),
 
   isActive: z.boolean().default(true),
 
   options: z
     .array(
       z.object({
-        text: z.string().min(1, "Option text is required"),
+        text: z.string().trim().min(1, "Option text is required"),
         isCorrect: z.boolean(),
       }),
     )
@@ -112,9 +122,13 @@ export const createQuestionSchema = z.object({
 
 export const updateQuestionSchema = z
   .object({
+    type: z.enum(QuestionType).optional(),
+
     question: z.string().trim().min(1, "Question is required").optional(),
 
-    explanation: z.string().trim().min(1, "Explanation is required").optional(),
+    explanation: z.string().trim().optional(),
+
+    content: questionContentSchema.optional(),
 
     isActive: z.boolean().optional(),
 
@@ -138,6 +152,7 @@ export const updateQuestionSchema = z
   .refine((data) => Object.keys(data).length > 0, {
     message: "At least one field is required",
   });
+
 export const getQuestionsSchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(100).default(20),

@@ -370,8 +370,10 @@ export const createQuestion = async (
 
   const question = await prisma.question.create({
     data: {
+      type: data.type,
       question: data.question,
       explanation: data.explanation,
+      content: data.content,
       isActive: data.isActive,
       order,
       quizId,
