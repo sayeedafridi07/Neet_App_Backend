@@ -8,6 +8,7 @@ import classRoutes from "../modules/class/class.route.js";
 import chapterRoutes from "../modules/chapter/chapter.route.js";
 import audioLectureRoutes from "../modules/audio-lecture/audio-lecture.route.js";
 import keywordRevisionRoutes from "../modules/keyword-revision/keyword-revision.route.js";
+import quizRoutes from "../modules/quiz/quiz.route.js";
 
 const router = Router();
 
@@ -19,5 +20,6 @@ router.use("/classes", classRoutes);
 router.use("/chapters", chapterRoutes);
 router.use("/audio-lectures", audioLectureRoutes);
 router.use("/keyword-revisions", keywordRevisionRoutes);
+router.use("/quizzes", quizRoutes);
 
 export default router;

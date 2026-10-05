@@ -27,18 +27,20 @@ model User {
   lastActiveAt    DateTime?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
+
+  quizAttempts QuizAttempt[]
 }
 
 model Admin {
-  id           String    @id @default(uuid())
-  email        String    @unique
-  password     String
-  name         String?
-  role         AdminRole @default(ADMIN)
-  isActive     Boolean   @default(true)
-  accessToken  String?
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
+  id          String    @id @default(uuid())
+  email       String    @unique
+  password    String
+  name        String?
+  role        AdminRole @default(ADMIN)
+  isActive    Boolean   @default(true)
+  accessToken String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
 }
 
 enum AdminRole {
@@ -82,8 +84,9 @@ model Chapter {
   classId String
   class   AcademicClass @relation(fields: [classId], references: [id])
 
-  audioLectures AudioLecture[]
+  audioLectures    AudioLecture[]
   keywordRevisions KeywordRevision[]
+  quizzes          Quiz[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -98,9 +101,9 @@ model AudioLecture {
   slug        String
   description String?
 
-  audioKey  String
-  duration  Int
-  order Int
+  audioKey String
+  duration Int
+  order    Int
 
   chapterId String
   chapter   Chapter @relation(fields: [chapterId], references: [id])
@@ -120,9 +123,9 @@ model KeywordRevision {
   slug        String
   description String?
 
-  audioKey  String
-  duration  Int
-  order Int
+  audioKey String
+  duration Int
+  order    Int
 
   chapterId String
   chapter   Chapter @relation(fields: [chapterId], references: [id])
@@ -134,4 +137,169 @@ model KeywordRevision {
 
   @@unique([chapterId, slug])
   @@index([chapterId])
+}
+
+enum QuizType {
+  CHAPTER
+  TEST_SERIES
+}
+
+model Quiz {
+  id          String   @id @default(uuid())
+  title       String
+  description String?
+
+  type QuizType
+
+  chapterId String?
+  chapter   Chapter? @relation(fields: [chapterId], references: [id], onDelete: SetNull)
+
+  durationMinutes Int?
+
+  // Marking scheme
+  correctMarks Int @default(4)
+  wrongMarks   Int @default(-1)
+  skippedMarks Int @default(0)
+
+  isActive Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  questions Question[]
+  attempts  QuizAttempt[]
+
+  @@index([chapterId])
+  @@index([type])
+  @@index([isActive])
+}
+
+enum QuestionType {
+  SINGLE_CHOICE
+  ASSERTION_REASON
+  MATCH_THE_FOLLOWING
+}
+
+model Question {
+  id String @id @default(uuid())
+
+  quizId String
+  quiz   Quiz @relation(fields: [quizId], references: [id], onDelete: Cascade)
+
+  type QuestionType @default(SINGLE_CHOICE)
+
+  question    String
+  explanation String?
+
+  // Structured content for tables,
+  // assertion/reason, match-the-following, etc.
+  content Json?
+
+  order    Int
+  isActive Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  options QuestionOption[]
+
+  @@unique([quizId, order])
+  @@index([quizId])
+  @@index([isActive])
+  @@index([type])
+}
+
+model QuestionOption {
+  id String @id @default(uuid())
+
+  questionId String
+  question   Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  text      String
+  isCorrect Boolean @default(false)
+
+  order Int
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([questionId, order])
+  @@index([questionId])
+}
+
+enum QuizAttemptStatus {
+  IN_PROGRESS
+  SUBMITTED
+  AUTO_SUBMITTED
+  EXPIRED
+}
+
+model QuizAttempt {
+  id String @id @default(uuid())
+
+  quizId String
+  quiz   Quiz @relation(fields: [quizId], references: [id], onDelete: Restrict)
+
+  userId String
+  user   User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  status QuizAttemptStatus @default(IN_PROGRESS)
+
+  startedAt   DateTime @default(now())
+  expiresAt   DateTime
+  submittedAt DateTime?
+
+  score          Decimal?
+  correctAnswers Int @default(0)
+  wrongAnswers   Int @default(0)
+  skippedAnswers Int @default(0)
+
+  // Snapshot of the complete quiz/questions at attempt creation.
+  // This protects historical attempts from later admin edits.
+  questionsSnapshot Json
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  answers QuizAttemptAnswer[]
+
+  @@index([quizId])
+  @@index([userId])
+  @@index([status])
+  @@index([expiresAt])
+}
+
+enum QuizAnswerStatus {
+  NOT_ANSWERED
+  ANSWERED
+  MARKED
+  MARKED_AND_ANSWERED
+}
+
+model QuizAttemptAnswer {
+  id String @id @default(uuid())
+
+  attemptId String
+  attempt   QuizAttempt @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+
+  // These are references/identifiers only.
+  // They are intentionally NOT Prisma relations because
+  // the attempt uses questionsSnapshot as its historical source.
+  questionId String
+
+  questionOrder Int
+
+  selectedOptionId String?
+
+  status QuizAnswerStatus @default(NOT_ANSWERED)
+
+  isCorrect Boolean?
+  marks     Decimal?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([attemptId, questionId])
+  @@index([attemptId, questionOrder])
+  @@index([questionId])
 }
