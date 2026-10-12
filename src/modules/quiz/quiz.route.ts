@@ -9,10 +9,12 @@ import {
   getQuestions,
   getQuizById,
   getQuizzes,
+  importQuestions,
   updateQuestion,
   updateQuiz
 } from "./quiz.controller.js";
 
+import { handleDocumentUpload } from "../../config/multer.js";
 import { AdminRole } from "../../generated/prisma/enums.js";
 import { adminAuthMiddleware } from "../../middlewares/admin-auth.middleware.js";
 import { allowRoles } from "../../middlewares/allow-role.middleware.js";
@@ -46,6 +48,11 @@ router.post(
   "/:quizId/questions",
   validate(createQuestionSchema),
   createQuestion,
+);
+router.post(
+  "/:quizId/questions/import",
+  handleDocumentUpload,
+  importQuestions,
 );
 
 router.get("/:quizId/questions/:questionId", getQuestionById);

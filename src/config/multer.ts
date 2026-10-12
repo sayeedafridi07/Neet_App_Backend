@@ -184,3 +184,71 @@ export const discardUploadedFile = async (file?: Express.Multer.File) => {
 
   await removeUploadedFile(getAudioKey(file));
 };
+
+/* -------------------------------------------------------------------------- */
+/* QUESTION DOCUMENTS                                                         */
+/* -------------------------------------------------------------------------- */
+
+export const DOCUMENT_FIELD_NAME = "file";
+
+const DOCX_MIME_TYPE =
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+
+const MAX_DOCUMENT_SIZE = 10 * 1024 * 1024;
+
+// Kept in memory: the document is parsed once and never stored.
+export const uploadDocument = multer({
+  storage: multer.memoryStorage(),
+  fileFilter: (_req, file, cb) => {
+    // Some clients send docx as octet-stream, so fall back to the extension.
+    const isDocx =
+      file.mimetype === DOCX_MIME_TYPE ||
+      path.extname(file.originalname).toLowerCase() === ".docx";
+
+    if (!isDocx) {
+      return cb(new AppError(415, "Only .docx files are supported"));
+    }
+
+    cb(null, true);
+  },
+  limits: {
+    fileSize: MAX_DOCUMENT_SIZE,
+    files: 1,
+  },
+}).single(DOCUMENT_FIELD_NAME);
+
+export const handleDocumentUpload = (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) => {
+  uploadDocument(req, res, (error: unknown) => {
+    if (!error) {
+      return next();
+    }
+
+    if (error instanceof multer.MulterError) {
+      if (error.code === "LIMIT_FILE_SIZE") {
+        return next(
+          new AppError(
+            413,
+            `Document exceeds the ${Math.floor(MAX_DOCUMENT_SIZE / 1024 / 1024)}MB limit`,
+          ),
+        );
+      }
+
+      if (error.code === "LIMIT_UNEXPECTED_FILE") {
+        return next(
+          new AppError(
+            400,
+            `Unexpected file field "${error.field}". Upload the document as "${DOCUMENT_FIELD_NAME}".`,
+          ),
+        );
+      }
+
+      return next(new AppError(400, error.message));
+    }
+
+    return next(error);
+  });
+};

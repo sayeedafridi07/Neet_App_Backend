@@ -11,6 +11,8 @@ import type {
   UpdateQuizData,
 } from "./quiz.schema.js";
 
+import { parseQuestionsFromDocx } from "./quiz.import.js";
+
 type QuizPatch = UpdateQuizData;
 
 const formatQuiz = (quiz: any) => {
@@ -373,7 +375,7 @@ export const createQuestion = async (
       type: data.type,
       question: data.question,
       explanation: data.explanation,
-      content: data.content,
+      content: data.content ?? undefined,
       isActive: data.isActive,
       order,
       quizId,
@@ -473,6 +475,110 @@ export const updateQuestion = async (
   });
 
   return updated;
+};
+
+// All or nothing: a partially imported file is hard to fix and re-upload
+// without creating duplicates, so any unparseable question rejects the file.
+export const importQuestions = async (quizId: string, buffer: Buffer) => {
+  const quiz = await prisma.quiz.findUnique({
+    where: {
+      id: quizId,
+    },
+    select: {
+      id: true,
+    },
+  });
+
+  if (!quiz) {
+    throw new AppError(404, "Quiz not found");
+  }
+
+  let parsed;
+
+  try {
+    parsed = await parseQuestionsFromDocx(buffer);
+  } catch {
+    throw new AppError(400, "Could not read the document. Upload a valid .docx file");
+  }
+
+  if (!parsed.length) {
+    throw new AppError(400, 'No questions found. Each question must end with an "Ans: (x)" line');
+  }
+
+  const failed = parsed.filter((entry) => entry.error);
+
+  if (failed.length) {
+    throw new AppError(
+      422,
+      `Could not import ${failed.length} question(s): ` +
+        failed
+          .map((entry) => `#${entry.index} "${entry.preview}" - ${entry.error}`)
+          .join("; "),
+    );
+  }
+
+  const questions = await prisma.$transaction(
+    async (tx) => {
+      const lastQuestion = await tx.question.findFirst({
+        where: {
+          quizId,
+        },
+        orderBy: {
+          order: "desc",
+        },
+        select: {
+          order: true,
+        },
+      });
+
+      let order = lastQuestion?.order ?? 0;
+      const created = [];
+
+      for (const { data } of parsed) {
+        order += 1;
+
+        created.push(
+          await tx.question.create({
+            data: {
+              type: data!.type,
+              question: data!.question,
+              explanation: data!.explanation,
+              content: data!.content ?? undefined,
+              isActive: data!.isActive,
+              order,
+              quizId,
+
+              options: {
+                create: data!.options.map((option, index) => ({
+                  text: option.text,
+                  isCorrect: option.isCorrect,
+                  order: index + 1,
+                })),
+              },
+            },
+
+            include: {
+              options: {
+                orderBy: {
+                  order: "asc",
+                },
+              },
+            },
+          }),
+        );
+      }
+
+      return created;
+    },
+    {
+      timeout: 60_000,
+    },
+  );
+
+  return {
+    imported: questions.length,
+    questions,
+  };
 };
 
 export const deleteQuestion = async (quizId: string, questionId: string) => {

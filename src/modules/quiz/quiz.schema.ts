@@ -6,7 +6,10 @@ import { QuizType, QuestionType } from "../../generated/prisma/enums.js";
 // would silently overwrite the marking scheme, so normalise them away first.
 const optionalMarks = z.preprocess(
   (value) => (value === null || value === "" ? undefined : value),
-  z.coerce.number().finite("Marks must be a finite number").optional(),
+  z.coerce
+    .number()
+    .finite("Marks must be a finite number")
+    .optional(),
 );
 
 // Unlike the marking scheme, an explicit null here is meaningful: it detaches
@@ -14,13 +17,62 @@ const optionalMarks = z.preprocess(
 // reject it for CHAPTER quizzes instead of silently ignoring the field.
 const nullableUuid = z.uuid("Invalid chapter ID").nullable().optional();
 
-const questionContentSchema = z.object({
-  blocks: z.array(
-    z.object({
-      type: z.string(),
-    }),
-  ),
+/* -------------------------------------------------------------------------- */
+/* QUESTION CONTENT                                                           */
+/* -------------------------------------------------------------------------- */
+
+// Match the Following
+const matchTableBlockSchema = z.object({
+  type: z.literal("MATCH_TABLE"),
+
+  columns: z
+    .array(
+      z.object({
+        key: z.string().trim().min(1, "Column key is required"),
+
+        title: z.string().trim().min(1, "Column title is required"),
+
+        items: z
+          .array(
+            z.object({
+              key: z.string().trim().min(1, "Item key is required"),
+
+              text: z.string().trim().min(1, "Item text is required"),
+            }),
+          )
+          .min(1, "A column must have at least one item"),
+      }),
+    )
+    .min(2, "A match table must have at least two columns"),
 });
+
+// Assertion / Reason
+const assertionReasonBlockSchema = z.object({
+  type: z.literal("ASSERTION_REASON"),
+
+  assertion: z.string().trim().min(1, "Assertion is required"),
+
+  reason: z.string().trim().min(1, "Reason is required"),
+});
+
+// All supported content block types
+const questionContentBlockSchema = z.discriminatedUnion("type", [
+  matchTableBlockSchema,
+  assertionReasonBlockSchema,
+]);
+
+// Question content
+const questionContentSchema = z
+  .object({
+    blocks: z
+      .array(questionContentBlockSchema)
+      .min(1, "At least one content block is required"),
+  })
+  .nullable();
+
+/* -------------------------------------------------------------------------- */
+/* QUIZ                                                                       */
+/* -------------------------------------------------------------------------- */
 
 export const createQuizSchema = z
   .object({
@@ -82,22 +134,31 @@ export const updateQuizSchema = z
 
 export const getQuizzesSchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
+
   limit: z.coerce.number().int().min(1).max(100).default(20),
+
   search: z.string().trim().optional(),
+
   chapterId: z.uuid("Invalid chapter ID").optional(),
+
   type: z.enum(QuizType).optional(),
+
   isActive: z
     .enum(["true", "false"])
     .transform((value) => value === "true")
     .optional(),
 });
 
+/* -------------------------------------------------------------------------- */
+/* QUESTION                                                                   */
+/* -------------------------------------------------------------------------- */
+
 export const createQuestionSchema = z.object({
   type: z.enum(QuestionType).default(QuestionType.SINGLE_CHOICE),
 
   question: z.string().trim().min(1, "Question is required"),
 
-  explanation: z.string().trim().optional(),
+  explanation: z.string().trim().nullable().optional(),
 
   content: questionContentSchema.optional(),
 
@@ -107,13 +168,15 @@ export const createQuestionSchema = z.object({
     .array(
       z.object({
         text: z.string().trim().min(1, "Option text is required"),
+
         isCorrect: z.boolean(),
       }),
     )
     .min(2, "A question must have at least two options")
     .max(6, "A question cannot have more than six options")
     .refine(
-      (options) => options.filter((option) => option.isCorrect).length === 1,
+      (options) =>
+        options.filter((option) => option.isCorrect).length === 1,
       {
         message: "A question must have exactly one correct option",
       },
@@ -126,7 +189,7 @@ export const updateQuestionSchema = z
 
     question: z.string().trim().min(1, "Question is required").optional(),
 
-    explanation: z.string().trim().optional(),
+    explanation: z.string().trim().nullable().optional(),
 
     content: questionContentSchema.optional(),
 
@@ -136,13 +199,15 @@ export const updateQuestionSchema = z
       .array(
         z.object({
           text: z.string().trim().min(1, "Option text is required"),
+
           isCorrect: z.boolean(),
         }),
       )
       .min(2, "A question must have at least two options")
       .max(6, "A question cannot have more than six options")
       .refine(
-        (options) => options.filter((option) => option.isCorrect).length === 1,
+        (options) =>
+          options.filter((option) => option.isCorrect).length === 1,
         {
           message: "A question must have exactly one correct option",
         },
@@ -155,15 +220,25 @@ export const updateQuestionSchema = z
 
 export const getQuestionsSchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
+
   limit: z.coerce.number().int().min(1).max(100).default(20),
+
   search: z.string().trim().optional(),
+
   isActive: z
     .enum(["true", "false"])
     .transform((value) => value === "true")
     .optional(),
 });
 
+/* -------------------------------------------------------------------------- */
+/* TYPES                                                                      */
+/* -------------------------------------------------------------------------- */
+
 export type CreateQuizData = z.infer<typeof createQuizSchema>;
+
 export type UpdateQuizData = z.infer<typeof updateQuizSchema>;
+
 export type CreateQuestionData = z.infer<typeof createQuestionSchema>;
+
 export type UpdateQuestionData = z.infer<typeof updateQuestionSchema>;

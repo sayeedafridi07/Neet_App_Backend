@@ -1,6 +1,7 @@
 import type { Request, Response, NextFunction } from "express";
 import * as quizService from "./quiz.service.js";
 import { sendResponse } from "../../utils/response.js";
+import { AppError } from "../../utils/app-error.js";
 import { getQuizzesSchema, getQuestionsSchema } from "./quiz.schema.js";
 
 export const getQuizzes = async (
@@ -159,6 +160,33 @@ export const createQuestion = async (
       true,
       "Question created successfully",
       question,
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const importQuestions = async (
+  req: Request<{ quizId: string }>,
+  res: Response,
+  next: NextFunction,
+) => {
+  try {
+    if (!req.file) {
+      throw new AppError(400, 'Upload a .docx file as "file"');
+    }
+
+    const result = await quizService.importQuestions(
+      req.params.quizId,
+      req.file.buffer,
+    );
+
+    return sendResponse(
+      res,
+      201,
+      true,
+      `${result.imported} question(s) imported successfully`,
+      result,
     );
   } catch (error) {
     next(error);
