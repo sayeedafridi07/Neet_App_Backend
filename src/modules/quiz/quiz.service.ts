@@ -372,10 +372,8 @@ export const createQuestion = async (
 
   const question = await prisma.question.create({
     data: {
-      type: data.type,
       question: data.question,
       explanation: data.explanation,
-      content: data.content ?? undefined,
       isActive: data.isActive,
       order,
       quizId,
@@ -459,16 +457,11 @@ export const updateQuestion = async (
       });
     }
 
-    const updateData: any = { ...fields };
-    if ('content' in updateData && updateData.content === null) {
-      updateData.content = undefined;
-    }
-
     return tx.question.update({
       where: {
         id: questionId,
       },
-      data: updateData,
+      data: fields,
       include: {
         options: {
           orderBy: {
@@ -545,10 +538,8 @@ export const importQuestions = async (quizId: string, buffer: Buffer) => {
         created.push(
           await tx.question.create({
             data: {
-              type: data!.type,
               question: data!.question,
               explanation: data!.explanation,
-              content: data!.content ?? undefined,
               isActive: data!.isActive,
               order,
               quizId,

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { QuizType, QuestionType } from "../../generated/prisma/enums.js";
+import { QuizType } from "../../generated/prisma/enums.js";
 
 // Clients that build payloads dynamically tend to send null or "" for values
 // they mean to leave untouched. z.coerce.number() turns null into 0, which
@@ -16,59 +16,6 @@ const optionalMarks = z.preprocess(
 // the quiz from its chapter. It is kept in the payload so the service can
 // reject it for CHAPTER quizzes instead of silently ignoring the field.
 const nullableUuid = z.uuid("Invalid chapter ID").nullable().optional();
-
-/* -------------------------------------------------------------------------- */
-/* QUESTION CONTENT                                                           */
-/* -------------------------------------------------------------------------- */
-
-// Match the Following
-const matchTableBlockSchema = z.object({
-  type: z.literal("MATCH_TABLE"),
-
-  columns: z
-    .array(
-      z.object({
-        key: z.string().trim().min(1, "Column key is required"),
-
-        title: z.string().trim().min(1, "Column title is required"),
-
-        items: z
-          .array(
-            z.object({
-              key: z.string().trim().min(1, "Item key is required"),
-
-              text: z.string().trim().min(1, "Item text is required"),
-            }),
-          )
-          .min(1, "A column must have at least one item"),
-      }),
-    )
-    .min(2, "A match table must have at least two columns"),
-});
-
-// Assertion / Reason
-const assertionReasonBlockSchema = z.object({
-  type: z.literal("ASSERTION_REASON"),
-
-  assertion: z.string().trim().min(1, "Assertion is required"),
-
-  reason: z.string().trim().min(1, "Reason is required"),
-});
-
-// All supported content block types
-const questionContentBlockSchema = z.discriminatedUnion("type", [
-  matchTableBlockSchema,
-  assertionReasonBlockSchema,
-]);
-
-// Question content
-const questionContentSchema = z
-  .object({
-    blocks: z
-      .array(questionContentBlockSchema)
-      .min(1, "At least one content block is required"),
-  })
-  .nullable();
 
 /* -------------------------------------------------------------------------- */
 /* QUIZ                                                                       */
@@ -154,13 +101,9 @@ export const getQuizzesSchema = z.object({
 /* -------------------------------------------------------------------------- */
 
 export const createQuestionSchema = z.object({
-  type: z.enum(QuestionType).default(QuestionType.SINGLE_CHOICE),
-
   question: z.string().trim().min(1, "Question is required"),
 
   explanation: z.string().trim().nullable().optional(),
-
-  content: questionContentSchema.optional(),
 
   isActive: z.boolean().default(true),
 
@@ -185,15 +128,11 @@ export const createQuestionSchema = z.object({
 
 export const updateQuestionSchema = z
   .object({
-    type: z.enum(QuestionType).optional(),
-
     question: z.string().trim().min(1, "Question is required").optional(),
 
     explanation: z.string().trim().nullable().optional(),
 
-    content: questionContentSchema.optional(),
-
-    isActive: z.boolean().optional(),
+      isActive: z.boolean().optional(),
 
     options: z
       .array(

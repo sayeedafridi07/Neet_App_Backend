@@ -171,26 +171,14 @@ model Quiz {
   @@index([isActive])
 }
 
-enum QuestionType {
-  SINGLE_CHOICE
-  ASSERTION_REASON
-  MATCH_THE_FOLLOWING
-}
-
 model Question {
   id String @id @default(uuid())
 
   quizId String
   quiz   Quiz @relation(fields: [quizId], references: [id], onDelete: Cascade)
 
-  type QuestionType @default(SINGLE_CHOICE)
-
   question    String
   explanation String?
-
-  // Structured content for tables,
-  // assertion/reason, match-the-following, etc.
-  content Json?
 
   order    Int
   isActive Boolean @default(true)
@@ -203,7 +191,6 @@ model Question {
   @@unique([quizId, order])
   @@index([quizId])
   @@index([isActive])
-  @@index([type])
 }
 
 model QuestionOption {
