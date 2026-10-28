@@ -2,7 +2,12 @@ import type { Request, Response, NextFunction } from "express";
 import * as keywordRevisionService from "./keyword-revision.service.js";
 import { sendResponse } from "../../utils/response.js";
 import { getKeywordRevisionsSchema } from "./keyword-revision.schema.js";
-import { discardUploadedFile } from "../../config/multer.js";
+import {
+  AUDIO_FIELD_NAME,
+  IMAGE_FIELD_NAME,
+  discardUploadedFiles,
+  getUploadedFile,
+} from "../../config/multer.js";
 
 export const getKeywordRevisions = async (
   req: Request,
@@ -74,12 +79,13 @@ export const createKeywordRevision = async (
   try {
     const keywordRevision = await keywordRevisionService.createKeywordRevision(
       req.body,
-      req.file,
+      getUploadedFile(req, AUDIO_FIELD_NAME),
+      getUploadedFile(req, IMAGE_FIELD_NAME),
     );
 
     return sendResponse(res, 201, true, "Keyword revision created successfully", keywordRevision);
   } catch (error) {
-    await discardUploadedFile(req.file);
+    await discardUploadedFiles(req);
     next(error);
   }
 };
@@ -93,12 +99,13 @@ export const updateKeywordRevision = async (
     const keywordRevision = await keywordRevisionService.updateKeywordRevision(
       req.params.id,
       req.body,
-      req.file,
+      getUploadedFile(req, AUDIO_FIELD_NAME),
+      getUploadedFile(req, IMAGE_FIELD_NAME),
     );
 
     return sendResponse(res, 200, true, "Keyword revision updated successfully", keywordRevision);
   } catch (error) {
-    await discardUploadedFile(req.file);
+    await discardUploadedFiles(req);
     next(error);
   }
 };

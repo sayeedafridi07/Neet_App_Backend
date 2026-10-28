@@ -10,7 +10,10 @@ import { createQuestionSchema, type CreateQuestionData } from "./quiz.schema.js"
 // rows of cells so options laid out in a grid can still be recovered.
 type TextToken = {
   kind: "text";
+  // Plain text, used to recognise answers, options and labels.
   text: string;
+  // The same line with formatting kept, which is what gets stored.
+  markdown: string;
   // Word auto-numbered lists drop their "(a)" labels in the HTML output, so
   // the list a line belongs to is tracked to recover option order.
   listId?: number;
@@ -22,6 +25,8 @@ type TableToken = {
 };
 
 type Token = TextToken | TableToken;
+
+type Option = { letter: string; text: string };
 
 export type ParsedQuestion = {
   index: number;
@@ -55,15 +60,50 @@ const decodeEntities = (value: string) =>
 const cleanText = (value: string) =>
   decodeEntities(value.replace(/<[^>]+>/g, ""))
     .replace(/\s+/g, " ")
-    .replace(/^\*+|\*+$/g, "")
     .trim();
+
+// Labels cut out of a formatted line ("**(a)** Lamarck") leave a stray "**".
+const tidyEmphasis = (value: string) => {
+  const text = value.trim();
+
+  if ((text.match(/\*\*/g)?.length ?? 0) % 2 === 0) {
+    return text;
+  }
+
+  return text.replace(/^\*\*\s*|\s*\*\*$/, "").trim();
+};
+
+// Keeps the formatting the frontend renders: bold, italics and LaTeX-style
+// superscripts/subscripts (m/s<sup>2</sup> -> m/s$^{2}$).
+const toMarkdown = (html: string) => {
+  const markdown = decodeEntities(
+    html
+      .replace(/<sup[^>]*>([\s\S]*?)<\/sup>/gi, (_, inner: string) => {
+        const text = cleanText(inner);
+        return text ? `$^{${text}}$` : "";
+      })
+      .replace(/<sub[^>]*>([\s\S]*?)<\/sub>/gi, (_, inner: string) => {
+        const text = cleanText(inner);
+        return text ? `$_{${text}}$` : "";
+      })
+      .replace(/<\/?(?:strong|b)(?:\s[^>]*)?>/gi, "**")
+      .replace(/<\/?(?:em|i)(?:\s[^>]*)?>/gi, "*")
+      .replace(/<[^>]+>/g, ""),
+  )
+    .replace(/\s+/g, " ")
+    // Adjacent runs ("**A****B**") and empty runs ("** **") collapse.
+    .replace(/\*\*\s*\*\*/g, (gap) => (gap.length > 4 ? " " : ""))
+    .trim();
+
+  return tidyEmphasis(markdown);
+};
 
 // Splits a fragment of HTML into its lines, honouring <br> inside a paragraph.
 const htmlToLines = (html: string) =>
   html
     .split(/<br\s*\/?>|<\/p>|<\/li>|<\/h\d>/i)
-    .map(cleanText)
-    .filter(Boolean);
+    .map((line) => ({ text: cleanText(line), markdown: toMarkdown(line) }))
+    .filter((line) => line.text);
 
 const tokenize = (html: string): Token[] => {
   const tokens: Token[] = [];
@@ -80,7 +120,10 @@ const tokenize = (html: string): Token[] => {
       const rows = [...part.matchAll(/<tr[^>]*>([\s\S]*?)<\/tr>/gi)]
         .map(([, row]) =>
           [...row!.matchAll(/<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/gi)].map(
-            ([, cell]) => htmlToLines(cell!).join(" "),
+            ([, cell]) =>
+              htmlToLines(cell!)
+                .map((line) => line.markdown)
+                .join(" "),
           ),
         )
         .filter((row) => row.some(Boolean));
@@ -96,16 +139,16 @@ const tokenize = (html: string): Token[] => {
       listCounter += 1;
 
       for (const [, item] of part.matchAll(/<li[^>]*>([\s\S]*?)<\/li>/gi)) {
-        for (const text of htmlToLines(item!)) {
-          tokens.push({ kind: "text", text, listId: listCounter });
+        for (const line of htmlToLines(item!)) {
+          tokens.push({ kind: "text", ...line, listId: listCounter });
         }
       }
 
       continue;
     }
 
-    for (const text of htmlToLines(part)) {
-      tokens.push({ kind: "text", text });
+    for (const line of htmlToLines(part)) {
+      tokens.push({ kind: "text", ...line });
     }
   }
 
@@ -122,9 +165,23 @@ const ANSWER_PATTERN = /^(?:ans(?:wer)?|correct\s+(?:answer|option))\s*[:.\-–]
 
 const OPTION_PATTERN = /^\(\s*([a-f])\s*\)\s*(.*)$|^([a-f])[.)]\s+(.*)$/i;
 
+// Same shapes as OPTION_PATTERN, allowing the label itself to be bold/italic.
+const OPTION_LABEL_PATTERN = /^(\*\*)?\s*(?:\(\s*[a-f]\s*\)|[a-f][.)])\s*\1\s*/i;
+
 const EXPLANATION_PATTERN = /^(?:explanation|solution|sol|hint)\s*[:.\-–]\s*(.*)$/i;
 
+const EXPLANATION_LABEL_PATTERN = /^(\*\*)?\s*(?:explanation|solution|sol|hint)\s*[:.\-–]\s*\1\s*/i;
+
 const QUESTION_NUMBER_PATTERN = /^(?:q(?:uestion)?\s*\.?\s*)?\d{1,3}\s*[.):]\s+/i;
+
+const QUESTION_NUMBER_LABEL_PATTERN = /^(\**)\s*(?:q(?:uestion)?\s*\.?\s*)?\d{1,3}\s*[.):]\s+/i;
+
+// "Assertion (A):", "Reason (R):", "Statement I:" are bolded like the
+// questions created through the API.
+const LABEL_PATTERN =
+  /^((?:assertion|reason)\s*(?:\(\s*[ar]\s*\))?|statement\s*(?:[ivx]+|\d+))\s*:\s*/i;
+
+const OPTIONS_HEADING_PATTERN = /^options?\s*:?$/i;
 
 /* -------------------------------------------------------------------------- */
 /* OPTIONS                                                                    */
@@ -133,7 +190,7 @@ const QUESTION_NUMBER_PATTERN = /^(?:q(?:uestion)?\s*\.?\s*)?\d{1,3}\s*[.):]\s+/
 // "(a) Lamarck (b) Ernst Mayr (c) ..." on one line. Only labels that follow
 // in sequence split the line, so "(a) (a)" stays a single option.
 const splitInlineOptions = (text: string, startLetter: string) => {
-  const options: { letter: string; text: string }[] = [];
+  const options: Option[] = [];
   const matcher = /\(\s*([a-f])\s*\)/gi;
 
   let expected = OPTION_LETTERS.indexOf(startLetter);
@@ -149,7 +206,7 @@ const splitInlineOptions = (text: string, startLetter: string) => {
     if (current) {
       options.push({
         letter: current.letter,
-        text: text.slice(current.start, match.index).trim(),
+        text: tidyEmphasis(text.slice(current.start, match.index)),
       });
     }
 
@@ -158,13 +215,14 @@ const splitInlineOptions = (text: string, startLetter: string) => {
   }
 
   if (current) {
-    options.push({ letter: current.letter, text: text.slice(current.start).trim() });
+    options.push({ letter: current.letter, text: tidyEmphasis(text.slice(current.start)) });
   }
 
   return options;
 };
 
-const parseOptionLine = (text: string) => {
+// Matching runs on the plain text; the stored option text is the markdown.
+const parseOptionLine = (text: string, markdown = text) => {
   const match = text.match(OPTION_PATTERN);
 
   if (!match) {
@@ -172,20 +230,20 @@ const parseOptionLine = (text: string) => {
   }
 
   const letter = (match[1] ?? match[3])!.toLowerCase();
-  const inline = splitInlineOptions(text, letter);
+  const inline = splitInlineOptions(markdown, letter);
 
   if (inline.length > 1) {
     return inline;
   }
 
-  return [{ letter, text: (match[2] ?? match[4] ?? "").trim() }];
+  return [{ letter, text: tidyEmphasis(markdown.replace(OPTION_LABEL_PATTERN, "")) }];
 };
 
 // Options are the trailing run of "(a)".."(d)" lines before the answer. The
 // scan walks backwards so labels inside the stem (e.g. table rows) are left
 // alone.
 const extractOptions = (tokens: Token[]) => {
-  const options: { letter: string; text: string }[] = [];
+  const options: Option[] = [];
   let cursor = tokens.length - 1;
 
   while (cursor >= 0) {
@@ -195,7 +253,7 @@ const extractOptions = (tokens: Token[]) => {
       break;
     }
 
-    const parsed = parseOptionLine(token.text);
+    const parsed = parseOptionLine(token.text, token.markdown);
 
     if (!parsed) {
       break;
@@ -235,7 +293,7 @@ const extractOptions = (tokens: Token[]) => {
       return {
         options: items.map((item, index) => ({
           letter: OPTION_LETTERS[index]!,
-          text: item.text,
+          text: item.markdown,
         })),
         stem: tokens.slice(0, start),
       };
@@ -245,7 +303,7 @@ const extractOptions = (tokens: Token[]) => {
   // Options laid out in a table, e.g. a 2x2 grid of "(a) ..." cells.
   if (last?.kind === "table") {
     const cells = last.rows.flat().filter(Boolean);
-    const parsed = cells.map(parseOptionLine);
+    const parsed = cells.map((cell) => parseOptionLine(cell.replace(/\*/g, ""), cell));
 
     if (parsed.length >= 2 && parsed.every(Boolean)) {
       return {
@@ -262,36 +320,53 @@ const extractOptions = (tokens: Token[]) => {
 /* QUESTION BUILDING                                                          */
 /* -------------------------------------------------------------------------- */
 
-const cleanQuestionLine = (text: string) =>
-  text.replace(QUESTION_NUMBER_PATTERN, "").replace(/^options?\s*:?$/i, "").trim();
+const escapeCell = (cell: string) => cell.replace(/\|/g, "\\|");
+
+// Rows are padded to the widest row; the first row is the header.
+const tableToMarkdown = (rows: string[][]) => {
+  const width = Math.max(...rows.map((row) => row.length));
+  const line = (row: string[]) =>
+    `| ${Array.from({ length: width }, (_, i) => escapeCell(row[i] ?? "")).join(" | ")} |`;
+
+  return [line(rows[0]!), `|${"---|".repeat(width)}`, ...rows.slice(1).map(line)].join("\n");
+};
+
+const formatLine = (markdown: string) =>
+  markdown.replace(LABEL_PATTERN, (_, label: string) => `**${label.trim()}:** `);
 
 const buildQuestion = (
   stem: Token[],
-  options: { letter: string; text: string }[],
+  options: Option[],
   answer: string,
   explanation: string | undefined,
 ): CreateQuestionData => {
   // A lone "Options" heading sits between the stem and the options.
   const tokens = stem.filter(
-    (token) => !(token.kind === "text" && /^options?\s*:?$/i.test(token.text)),
+    (token) => !(token.kind === "text" && OPTIONS_HEADING_PATTERN.test(token.text)),
   );
 
   const firstLine = tokens.findIndex((token) => token.kind === "text");
 
   if (firstLine !== -1) {
     const token = tokens[firstLine] as TextToken;
-    tokens[firstLine] = { ...token, text: cleanQuestionLine(token.text) };
+
+    if (QUESTION_NUMBER_PATTERN.test(token.text)) {
+      tokens[firstLine] = {
+        ...token,
+        markdown: tidyEmphasis(token.markdown.replace(QUESTION_NUMBER_LABEL_PATTERN, "$1")),
+      };
+    }
   }
 
-  // Tables in the stem are flattened into "cell | cell" lines.
-  const lines = tokens.flatMap((token) =>
-    token.kind === "text"
-      ? [token.text]
-      : token.rows.map((row) => row.filter(Boolean).join(" | ")),
-  );
+  // Paragraphs and tables are separate markdown blocks.
+  const blocks = tokens
+    .map((token) =>
+      token.kind === "text" ? formatLine(token.markdown) : tableToMarkdown(token.rows),
+    )
+    .filter(Boolean);
 
   return {
-    question: lines.filter(Boolean).join("\n"),
+    question: blocks.join("\n\n"),
     explanation,
     isActive: true,
     options: options.map((option) => ({
@@ -313,10 +388,7 @@ const previewOf = (tokens: Token[]) => {
 
 // Each question ends at its "Ans: (x)" line. Explanation lines that follow an
 // answer are attached to that question rather than the next one.
-export const parseQuestionsFromDocx = async (
-  buffer: Buffer,
-): Promise<ParsedQuestion[]> => {
-  const { value: html } = await mammoth.convertToHtml({ buffer });
+export const parseQuestionsFromHtml = (html: string): ParsedQuestion[] => {
   const tokens = tokenize(html);
 
   const results: ParsedQuestion[] = [];
@@ -324,7 +396,7 @@ export const parseQuestionsFromDocx = async (
 
   const pending: {
     stem: Token[];
-    options: { letter: string; text: string }[];
+    options: Option[];
     answer: string;
     explanation: string[];
   }[] = [];
@@ -346,10 +418,10 @@ export const parseQuestionsFromDocx = async (
         continue;
       }
 
-      const explanation = token.text.match(EXPLANATION_PATTERN);
-
-      if (explanation && block.length === 0 && pending.length) {
-        pending[pending.length - 1]!.explanation.push(explanation[1]!.trim());
+      if (EXPLANATION_PATTERN.test(token.text) && block.length === 0 && pending.length) {
+        pending[pending.length - 1]!.explanation.push(
+          tidyEmphasis(token.markdown.replace(EXPLANATION_LABEL_PATTERN, "")),
+        );
         continue;
       }
     }
@@ -379,7 +451,7 @@ export const parseQuestionsFromDocx = async (
       entry.stem,
       entry.options,
       entry.answer,
-      entry.explanation.join("\n") || undefined,
+      entry.explanation.join("\n\n") || undefined,
     );
 
     const parsed = createQuestionSchema.safeParse(built);
@@ -411,4 +483,12 @@ export const parseQuestionsFromDocx = async (
   }
 
   return results;
+};
+
+export const parseQuestionsFromDocx = async (
+  buffer: Buffer,
+): Promise<ParsedQuestion[]> => {
+  const { value: html } = await mammoth.convertToHtml({ buffer });
+
+  return parseQuestionsFromHtml(html);
 };

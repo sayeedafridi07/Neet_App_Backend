@@ -99,6 +99,7 @@ model AudioLecture {
   description String?
 
   audioKey String
+  imageKey String?
   duration Int
   order    Int
 
@@ -121,6 +122,7 @@ model KeywordRevision {
   description String?
 
   audioKey String
+  imageKey String?
   duration Int
   order    Int
 
@@ -179,6 +181,7 @@ model Question {
 
   question    String
   explanation String?
+  imageKey    String?
 
   order    Int
   isActive Boolean @default(true)

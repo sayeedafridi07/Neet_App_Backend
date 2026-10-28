@@ -3,6 +3,10 @@ import * as quizService from "./quiz.service.js";
 import { sendResponse } from "../../utils/response.js";
 import { AppError } from "../../utils/app-error.js";
 import { getQuizzesSchema, getQuestionsSchema } from "./quiz.schema.js";
+import {
+  IMAGE_FIELD_NAME,
+  getUploadedFile,
+} from "../../config/multer.js";
 
 export const getQuizzes = async (
   req: Request,
@@ -152,6 +156,7 @@ export const createQuestion = async (
     const question = await quizService.createQuestion(
       req.params.quizId,
       req.body,
+      getUploadedFile(req, IMAGE_FIELD_NAME),
     );
 
     return sendResponse(
@@ -203,6 +208,7 @@ export const updateQuestion = async (
       req.params.quizId,
       req.params.questionId,
       req.body,
+      getUploadedFile(req, IMAGE_FIELD_NAME),
     );
 
     return sendResponse(

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { formBoolean } from "../../utils/form.js";
 
 export const createAudioLectureSchema = z.object({
   title: z.string().trim().min(1, "Title is required"),
@@ -17,6 +18,7 @@ export const createAudioLectureSchema = z.object({
   chapterId: z.uuid("Invalid chapter ID"),
 });
 
+// Emptiness is checked in the service, since an upload alone is a valid update
 export const updateAudioLectureSchema = z
   .object({
     title: z.string().trim().min(1, "Title is required").optional(),
@@ -36,9 +38,9 @@ export const updateAudioLectureSchema = z
       .optional(),
 
     isActive: z.boolean().optional(),
-  })
-  .refine((data) => Object.keys(data).length > 0, {
-    message: "At least one field is required",
+
+    // Clears the current image when no new one is uploaded
+    removeImage: formBoolean.optional(),
   });
 
 export const getAudioLecturesSchema = z.object({

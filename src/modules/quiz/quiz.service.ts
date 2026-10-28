@@ -13,6 +13,12 @@ import type {
 
 import { parseQuestionsFromDocx } from "./quiz.import.js";
 
+import {
+  getImageKey,
+  getUploadUrl,
+  removeUploadedFile,
+} from "../../config/multer.js";
+
 type QuizPatch = UpdateQuizData;
 
 const formatQuiz = (quiz: any) => {
@@ -20,6 +26,7 @@ const formatQuiz = (quiz: any) => {
 
   return {
     ...rest,
+    ...(rest.questions ? { questions: rest.questions.map(formatQuestion) } : {}),
     questionCount: _count?.questions ?? 0,
   };
 };
@@ -43,16 +50,15 @@ const quizInclude = {
 };
 
 // format
-const formatQuestion = (question: any) => {
-  if (!question?.options) {
-    return question;
-  }
+function formatQuestion(question: any) {
+  const { imageKey, ...rest } = question;
 
   return {
-    ...question,
-    options: question.options.map(formatOption),
+    ...rest,
+    imageUrl: imageKey ? getUploadUrl(imageKey) : null,
+    ...(rest.options ? { options: rest.options.map(formatOption) } : {}),
   };
-};
+}
 
 const assertChapterExists = async (chapterId: string) => {
   const chapter = await prisma.chapter.findUnique({
@@ -246,6 +252,18 @@ export const deleteQuiz = async (id: string) => {
     where: {
       id,
     },
+    include: {
+      questions: {
+        where: {
+          imageKey: {
+            not: null,
+          },
+        },
+        select: {
+          imageKey: true,
+        },
+      },
+    },
   });
 
   if (!quiz) {
@@ -257,6 +275,11 @@ export const deleteQuiz = async (id: string) => {
       id,
     },
   });
+
+  // Questions cascade with the quiz, so their images go with it
+  await Promise.all(
+    quiz.questions.map((question) => removeUploadedFile(question.imageKey!)),
+  );
 };
 
 export const getQuestions = async (
@@ -354,6 +377,25 @@ export const getQuestionById = async (quizId: string, questionId: string) => {
 export const createQuestion = async (
   quizId: string,
   data: CreateQuestionData,
+  image?: Express.Multer.File,
+) => {
+  const imageKey = image ? getImageKey(image) : undefined;
+
+  try {
+    return await insertQuestion(quizId, data, imageKey);
+  } catch (error) {
+    if (imageKey) {
+      await removeUploadedFile(imageKey);
+    }
+
+    throw error;
+  }
+};
+
+const insertQuestion = async (
+  quizId: string,
+  data: CreateQuestionData,
+  imageKey?: string,
 ) => {
   const quiz = await prisma.quiz.findUnique({
     where: {
@@ -374,6 +416,7 @@ export const createQuestion = async (
     data: {
       question: data.question,
       explanation: data.explanation,
+      imageKey,
       isActive: data.isActive,
       order,
       quizId,
@@ -396,13 +439,52 @@ export const createQuestion = async (
     },
   });
 
-  return question;
+  return formatQuestion(question);
 };
 
 export const updateQuestion = async (
   quizId: string,
   questionId: string,
   data: UpdateQuestionData,
+  image?: Express.Multer.File,
+) => {
+  if (!image && Object.keys(data).length === 0) {
+    throw new AppError(400, "At least one field is required");
+  }
+
+  const newImageKey = image ? getImageKey(image) : undefined;
+
+  let previous;
+  let updated;
+
+  try {
+    ({ previous, updated } = await applyQuestionUpdate(
+      quizId,
+      questionId,
+      data,
+      newImageKey,
+    ));
+  } catch (error) {
+    if (newImageKey) {
+      await removeUploadedFile(newImageKey);
+    }
+
+    throw error;
+  }
+
+  // Delete the old image only after the DB update succeeds
+  if (previous.imageKey && previous.imageKey !== updated.imageKey) {
+    await removeUploadedFile(previous.imageKey);
+  }
+
+  return formatQuestion(updated);
+};
+
+const applyQuestionUpdate = async (
+  quizId: string,
+  questionId: string,
+  data: UpdateQuestionData,
+  newImageKey?: string,
 ) => {
   const question = await prisma.question.findFirst({
     where: {
@@ -422,7 +504,9 @@ export const updateQuestion = async (
     throw new AppError(404, "Question not found");
   }
 
-  const { options, ...fields } = data;
+  const { options, removeImage, ...fields } = data;
+
+  const imageKey = newImageKey ?? (removeImage ? null : undefined);
 
   const optionsChanged =
     options !== undefined &&
@@ -461,7 +545,10 @@ export const updateQuestion = async (
       where: {
         id: questionId,
       },
-      data: fields,
+      data: {
+        ...fields,
+        imageKey,
+      },
       include: {
         options: {
           orderBy: {
@@ -472,7 +559,10 @@ export const updateQuestion = async (
     });
   });
 
-  return updated;
+  return {
+    previous: question,
+    updated,
+  };
 };
 
 // All or nothing: a partially imported file is hard to fix and re-upload
@@ -573,7 +663,7 @@ export const importQuestions = async (quizId: string, buffer: Buffer) => {
 
   return {
     imported: questions.length,
-    questions,
+    questions: questions.map(formatQuestion),
   };
 };
 
@@ -585,6 +675,7 @@ export const deleteQuestion = async (quizId: string, questionId: string) => {
     },
     select: {
       id: true,
+      imageKey: true,
     },
   });
 
@@ -597,4 +688,8 @@ export const deleteQuestion = async (quizId: string, questionId: string) => {
       id: questionId,
     },
   });
+
+  if (question.imageKey) {
+    await removeUploadedFile(question.imageKey);
+  }
 };

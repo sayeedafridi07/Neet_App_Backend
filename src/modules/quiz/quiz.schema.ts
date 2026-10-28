@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { QuizType } from "../../generated/prisma/enums.js";
+import { formBoolean, formJson } from "../../utils/form.js";
 
 // Clients that build payloads dynamically tend to send null or "" for values
 // they mean to leave untouched. z.coerce.number() turns null into 0, which
@@ -105,9 +106,10 @@ export const createQuestionSchema = z.object({
 
   explanation: z.string().trim().nullable().optional(),
 
-  isActive: z.boolean().default(true),
+  isActive: formBoolean.default(true),
 
-  options: z
+  options: formJson(
+    z
     .array(
       z.object({
         text: z.string().trim().min(1, "Option text is required"),
@@ -124,17 +126,23 @@ export const createQuestionSchema = z.object({
         message: "A question must have exactly one correct option",
       },
     ),
+  ),
 });
 
+// Emptiness is checked in the service, since an upload alone is a valid update
 export const updateQuestionSchema = z
   .object({
     question: z.string().trim().min(1, "Question is required").optional(),
 
     explanation: z.string().trim().nullable().optional(),
 
-      isActive: z.boolean().optional(),
+    isActive: formBoolean.optional(),
 
-    options: z
+    // Clears the current image when no new one is uploaded
+    removeImage: formBoolean.optional(),
+
+    options: formJson(
+      z
       .array(
         z.object({
           text: z.string().trim().min(1, "Option text is required"),
@@ -150,11 +158,8 @@ export const updateQuestionSchema = z
         {
           message: "A question must have exactly one correct option",
         },
-      )
-      .optional(),
-  })
-  .refine((data) => Object.keys(data).length > 0, {
-    message: "At least one field is required",
+      ),
+    ).optional(),
   });
 
 export const getQuestionsSchema = z.object({

@@ -6,6 +6,8 @@ import { generateSlug } from "../../utils/slug.js";
 
 import {
   getAudioKey,
+  getImageKey,
+  getUploadUrl,
   removeUploadedFile,
 } from "../../config/multer.js";
 
@@ -14,21 +16,19 @@ import type {
   UpdateKeywordRevisionData,
 } from "./keyword-revision.schema.js";
 
-type KeywordRevisionPatch = UpdateKeywordRevisionData & {
+type KeywordRevisionPatch = Omit<UpdateKeywordRevisionData, "removeImage"> & {
   slug?: string;
   audioKey?: string;
-};
-
-const getAudioUrl = (audioKey: string) => {
-  return `${process.env.BASE_URL}/uploads/${audioKey}`;
+  imageKey?: string | null;
 };
 
 const formatKeywordRevision = (keywordRevision: any) => {
-  const { audioKey, ...revision } = keywordRevision;
+  const { audioKey, imageKey, ...revision } = keywordRevision;
 
   return {
     ...revision,
-    audioUrl: getAudioUrl(audioKey),
+    audioUrl: getUploadUrl(audioKey),
+    imageUrl: imageKey ? getUploadUrl(imageKey) : null,
   };
 };
 
@@ -127,12 +127,14 @@ export const getKeywordRevisionBySlug = async (
 export const createKeywordRevision = async (
   data: CreateKeywordRevisionData,
   file?: Express.Multer.File,
+  image?: Express.Multer.File,
 ) => {
   if (!file) {
     throw new AppError(400, "Audio file is required");
   }
 
   const audioKey = getAudioKey(file);
+  const imageKey = image ? getImageKey(image) : undefined;
 
   try {
     const chapter = await prisma.chapter.findUnique({
@@ -169,6 +171,7 @@ export const createKeywordRevision = async (
           slug,
           description: data.description,
           audioKey,
+          imageKey,
           duration: data.duration,
           order: data.order,
           isActive: data.isActive,
@@ -179,6 +182,11 @@ export const createKeywordRevision = async (
     return formatKeywordRevision(keywordRevision);
   } catch (error) {
     await removeUploadedFile(audioKey);
+
+    if (imageKey) {
+      await removeUploadedFile(imageKey);
+    }
+
     throw error;
   }
 };
@@ -187,10 +195,16 @@ export const updateKeywordRevision = async (
   id: string,
   data: UpdateKeywordRevisionData,
   file?: Express.Multer.File,
+  image?: Express.Multer.File,
 ) => {
   const newAudioKey = file
     ? getAudioKey(file)
     : undefined;
+  const newImageKey = image ? getImageKey(image) : undefined;
+
+  if (!file && !image && Object.keys(data).length === 0) {
+    throw new AppError(400, "At least one field is required");
+  }
 
   let updateSuccessful = false;
 
@@ -206,8 +220,10 @@ export const updateKeywordRevision = async (
       throw new AppError(404, "Keyword revision not found");
     }
 
+    const { removeImage, ...fields } = data;
+
     const patch: KeywordRevisionPatch = {
-      ...data,
+      ...fields,
     };
 
     if (data.title) {
@@ -240,6 +256,12 @@ export const updateKeywordRevision = async (
       patch.audioKey = newAudioKey;
     }
 
+    if (newImageKey) {
+      patch.imageKey = newImageKey;
+    } else if (removeImage) {
+      patch.imageKey = null;
+    }
+
     const updated =
       await prisma.keywordRevision.update({
         where: {
@@ -249,6 +271,10 @@ export const updateKeywordRevision = async (
       });
 
     updateSuccessful = true;
+
+    if (keywordRevision.imageKey && keywordRevision.imageKey !== updated.imageKey) {
+      await removeUploadedFile(keywordRevision.imageKey);
+    }
 
     // Delete old file only after DB update succeeds
     if (
@@ -265,6 +291,10 @@ export const updateKeywordRevision = async (
     // Only delete newly uploaded file if DB update failed
     if (newAudioKey && !updateSuccessful) {
       await removeUploadedFile(newAudioKey);
+    }
+
+    if (newImageKey && !updateSuccessful) {
+      await removeUploadedFile(newImageKey);
     }
 
     throw error;
@@ -319,4 +349,8 @@ export const deleteKeywordRevision = async (
   });
 
   await removeUploadedFile(keywordRevision.audioKey);
+
+  if (keywordRevision.imageKey) {
+    await removeUploadedFile(keywordRevision.imageKey);
+  }
 };

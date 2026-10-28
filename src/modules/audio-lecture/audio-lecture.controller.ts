@@ -2,7 +2,12 @@ import type { Request, Response, NextFunction } from "express";
 import * as audioLectureService from "./audio-lecture.service.js";
 import { sendResponse } from "../../utils/response.js";
 import { getAudioLecturesSchema } from "./audio-lecture.schema.js";
-import { discardUploadedFile } from "../../config/multer.js";
+import {
+  AUDIO_FIELD_NAME,
+  IMAGE_FIELD_NAME,
+  discardUploadedFiles,
+  getUploadedFile,
+} from "../../config/multer.js";
 
 export const getAudioLectures = async (
   req: Request,
@@ -74,12 +79,13 @@ export const createAudioLecture = async (
   try {
     const audioLecture = await audioLectureService.createAudioLecture(
       req.body,
-      req.file,
+      getUploadedFile(req, AUDIO_FIELD_NAME),
+      getUploadedFile(req, IMAGE_FIELD_NAME),
     );
 
     return sendResponse(res, 201, true, "Audio lecture created successfully", audioLecture);
   } catch (error) {
-    await discardUploadedFile(req.file);
+    await discardUploadedFiles(req);
     next(error);
   }
 };
@@ -93,12 +99,13 @@ export const updateAudioLecture = async (
     const audioLecture = await audioLectureService.updateAudioLecture(
       req.params.id,
       req.body,
-      req.file,
+      getUploadedFile(req, AUDIO_FIELD_NAME),
+      getUploadedFile(req, IMAGE_FIELD_NAME),
     );
 
     return sendResponse(res, 200, true, "Audio lecture updated successfully", audioLecture);
   } catch (error) {
-    await discardUploadedFile(req.file);
+    await discardUploadedFiles(req);
     next(error);
   }
 };

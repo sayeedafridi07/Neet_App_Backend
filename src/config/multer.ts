@@ -72,9 +72,33 @@ const sanitizeFilename = (filename: string) => {
   return `${crypto.randomBytes(8).toString("hex")}_${name}${extension}`;
 };
 
+export const IMAGE_UPLOAD_DIR = "images";
+export const IMAGE_FIELD_NAME = "image";
+
+const IMAGE_MIME_TYPES: Record<string, string> = {
+  "image/jpeg": ".jpg",
+  "image/png": ".png",
+  "image/webp": ".webp",
+  "image/gif": ".gif",
+};
+
+const MAX_IMAGE_SIZE = 5 * 1024 * 1024; // 5MB
+
+export const getImageKey = (file: Express.Multer.File) => {
+  return path.posix.join(IMAGE_UPLOAD_DIR, file.filename);
+};
+
+export const getUploadUrl = (key: string) => {
+  return `${process.env.BASE_URL}/uploads/${key}`;
+};
+
+// Audio and images share one storage so a request can carry both.
 const storage = multer.diskStorage({
-  destination: (_req, _file, cb) => {
-    const dir = getAudioUploadDir();
+  destination: (_req, file, cb) => {
+    const dir = path.join(
+      getUploadRoot(),
+      file.fieldname === IMAGE_FIELD_NAME ? IMAGE_UPLOAD_DIR : AUDIO_UPLOAD_DIR,
+    );
 
     fs.mkdir(dir, { recursive: true }, (error) => {
       if (error) {
@@ -86,6 +110,14 @@ const storage = multer.diskStorage({
   },
 
   filename: (_req, file, cb) => {
+    if (file.fieldname === IMAGE_FIELD_NAME) {
+      // The extension comes from the validated mime type, never the client name.
+      return cb(
+        null,
+        `${crypto.randomBytes(16).toString("hex")}${IMAGE_MIME_TYPES[file.mimetype]}`,
+      );
+    }
+
     cb(null, sanitizeFilename(file.originalname));
   },
 });
@@ -95,6 +127,19 @@ const fileFilter = (
   file: Express.Multer.File,
   cb: multer.FileFilterCallback,
 ) => {
+  if (file.fieldname === IMAGE_FIELD_NAME) {
+    if (!IMAGE_MIME_TYPES[file.mimetype]) {
+      return cb(
+        new AppError(
+          415,
+          `Unsupported image type: ${file.mimetype}. Use JPEG, PNG, WebP or GIF`,
+        ),
+      );
+    }
+
+    return cb(null, true);
+  }
+
   if (
     !AUDIO_MIME_TYPES.includes(
       file.mimetype as (typeof AUDIO_MIME_TYPES)[number],
@@ -113,56 +158,125 @@ export const uploadAudio = multer({
   fileFilter,
   limits: {
     fileSize: MAX_FILE_SIZE,
+    files: 2,
+  },
+}).fields([
+  { name: AUDIO_FIELD_NAME, maxCount: 1 },
+  { name: IMAGE_FIELD_NAME, maxCount: 1 },
+]);
+
+export const uploadImage = multer({
+  storage,
+  fileFilter,
+  limits: {
+    fileSize: MAX_IMAGE_SIZE,
     files: 1,
   },
-}).single(AUDIO_FIELD_NAME);
+}).single(IMAGE_FIELD_NAME);
+
+export const getUploadedFile = (req: Request, field: string) => {
+  if (req.file?.fieldname === field) {
+    return req.file;
+  }
+
+  const files = req.files as Record<string, Express.Multer.File[]> | undefined;
+
+  return files?.[field]?.[0];
+};
+
+const getUploadedFiles = (req: Request) => {
+  const files = req.files as Record<string, Express.Multer.File[]> | undefined;
+
+  return [
+    ...(req.file ? [req.file] : []),
+    ...Object.values(files ?? {}).flat(),
+  ];
+};
+
+const toUploadError = (
+  error: unknown,
+  maxSize: number,
+  allowedFields: string,
+) => {
+  if (error instanceof multer.MulterError) {
+    if (error.code === "LIMIT_FILE_SIZE") {
+      return new AppError(
+        413,
+        `File exceeds the ${Math.floor(maxSize / 1024 / 1024)}MB limit`,
+      );
+    }
+
+    if (error.code === "LIMIT_UNEXPECTED_FILE") {
+      return new AppError(
+        400,
+        `Unexpected file field "${error.field}". Allowed fields: ${allowedFields}.`,
+      );
+    }
+
+    return new AppError(400, error.message);
+  }
+
+  return error;
+};
 
 export const handleAudioUpload = (
   req: Request,
   res: Response,
   next: NextFunction,
 ) => {
-  uploadAudio(req, res, (error: unknown) => {
-    if (!error) {
-      return next();
+  uploadAudio(req, res, async (error: unknown) => {
+    if (error) {
+      await discardUploadedFiles(req);
+
+      return next(
+        toUploadError(
+          error,
+          MAX_FILE_SIZE,
+          `"${AUDIO_FIELD_NAME}", "${IMAGE_FIELD_NAME}"`,
+        ),
+      );
     }
 
-    if (error instanceof AppError) {
-      return next(error);
+    // The size limit is shared with the audio, so check images separately
+    const image = getUploadedFile(req, IMAGE_FIELD_NAME);
+
+    if (image && image.size > MAX_IMAGE_SIZE) {
+      await discardUploadedFiles(req);
+
+      return next(
+        new AppError(
+          413,
+          `Image exceeds the ${Math.floor(MAX_IMAGE_SIZE / 1024 / 1024)}MB limit`,
+        ),
+      );
     }
 
-    if (error instanceof multer.MulterError) {
-      if (error.code === "LIMIT_FILE_SIZE") {
-        return next(
-          new AppError(
-            413,
-            `Audio file exceeds the ${Math.floor(MAX_FILE_SIZE / 1024 / 1024)}MB limit`,
-          ),
-        );
-      }
-
-      if (error.code === "LIMIT_UNEXPECTED_FILE") {
-        return next(
-          new AppError(
-            400,
-            `Unexpected file field "${error.field}". Upload the audio as "${AUDIO_FIELD_NAME}".`,
-          ),
-        );
-      }
-
-      return next(new AppError(400, error.message));
-    }
-
-    return next(error);
+    next();
   });
 };
 
-export const removeUploadedFile = async (audioKey: string) => {
+export const handleImageUpload = (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) => {
+  uploadImage(req, res, (error: unknown) => {
+    if (error) {
+      return next(
+        toUploadError(error, MAX_IMAGE_SIZE, `"${IMAGE_FIELD_NAME}"`),
+      );
+    }
+
+    next();
+  });
+};
+
+export const removeUploadedFile = async (key: string) => {
   const uploadRoot = getUploadRoot();
-  const filePath = path.resolve(uploadRoot, audioKey);
+  const filePath = path.resolve(uploadRoot, key);
 
   if (!filePath.startsWith(uploadRoot + path.sep)) {
-    console.warn(`⚠️ Refusing to delete outside upload root: ${audioKey}`);
+    console.warn(`⚠️ Refusing to delete outside upload root: ${key}`);
     return;
   }
 
@@ -172,17 +286,21 @@ export const removeUploadedFile = async (audioKey: string) => {
     const code = (error as NodeJS.ErrnoException).code;
 
     if (code !== "ENOENT") {
-      console.warn(`⚠️ Failed to delete ${audioKey}:`, error);
+      console.warn(`⚠️ Failed to delete ${key}:`, error);
     }
   }
 };
 
-export const discardUploadedFile = async (file?: Express.Multer.File) => {
-  if (!file) {
-    return;
-  }
-
-  await removeUploadedFile(getAudioKey(file));
+export const discardUploadedFiles = async (req: Request) => {
+  await Promise.all(
+    getUploadedFiles(req).map((file) =>
+      removeUploadedFile(
+        file.fieldname === IMAGE_FIELD_NAME
+          ? getImageKey(file)
+          : getAudioKey(file),
+      ),
+    ),
+  );
 };
 
 /* -------------------------------------------------------------------------- */
