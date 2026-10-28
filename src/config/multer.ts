@@ -88,6 +88,27 @@ export const getImageKey = (file: Express.Multer.File) => {
   return path.posix.join(IMAGE_UPLOAD_DIR, file.filename);
 };
 
+export const isSupportedImage = (contentType: string, size: number) =>
+  Boolean(IMAGE_MIME_TYPES[contentType]) && size <= MAX_IMAGE_SIZE;
+
+// Images extracted from documents never pass through multer, so they are
+// written here with the same naming rules and return the same kind of key.
+export const saveImageBuffer = async (buffer: Buffer, contentType: string) => {
+  const extension = IMAGE_MIME_TYPES[contentType];
+
+  if (!extension) {
+    throw new AppError(415, `Unsupported image type: ${contentType}`);
+  }
+
+  const dir = path.join(getUploadRoot(), IMAGE_UPLOAD_DIR);
+  const filename = `${crypto.randomBytes(16).toString("hex")}${extension}`;
+
+  await fs.promises.mkdir(dir, { recursive: true });
+  await fs.promises.writeFile(path.join(dir, filename), buffer);
+
+  return path.posix.join(IMAGE_UPLOAD_DIR, filename);
+};
+
 export const getUploadUrl = (key: string) => {
   return `${process.env.BASE_URL}/uploads/${key}`;
 };
@@ -312,19 +333,37 @@ export const DOCUMENT_FIELD_NAME = "file";
 const DOCX_MIME_TYPE =
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 
+const XLSX_MIME_TYPE =
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+
+export type DocumentKind = "docx" | "xlsx";
+
+export const getDocumentKind = (
+  mimetype: string,
+  originalname: string,
+): DocumentKind | null => {
+  const extension = path.extname(originalname).toLowerCase();
+
+  if (mimetype === DOCX_MIME_TYPE || extension === ".docx") {
+    return "docx";
+  }
+
+  if (mimetype === XLSX_MIME_TYPE || extension === ".xlsx") {
+    return "xlsx";
+  }
+
+  return null;
+};
+
 const MAX_DOCUMENT_SIZE = 10 * 1024 * 1024;
 
 // Kept in memory: the document is parsed once and never stored.
 export const uploadDocument = multer({
   storage: multer.memoryStorage(),
   fileFilter: (_req, file, cb) => {
-    // Some clients send docx as octet-stream, so fall back to the extension.
-    const isDocx =
-      file.mimetype === DOCX_MIME_TYPE ||
-      path.extname(file.originalname).toLowerCase() === ".docx";
-
-    if (!isDocx) {
-      return cb(new AppError(415, "Only .docx files are supported"));
+    // Some clients send these as octet-stream, so fall back to the extension.
+    if (!getDocumentKind(file.mimetype, file.originalname)) {
+      return cb(new AppError(415, "Only .docx and .xlsx files are supported"));
     }
 
     cb(null, true);

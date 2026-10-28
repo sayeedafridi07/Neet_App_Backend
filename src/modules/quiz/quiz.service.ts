@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import prisma from "../../config/prisma.js";
 
 import { AppError } from "../../utils/app-error.js";
@@ -11,12 +13,14 @@ import type {
   UpdateQuizData,
 } from "./quiz.schema.js";
 
-import { parseQuestionsFromDocx } from "./quiz.import.js";
+import type { DocumentKind } from "../../config/multer.js";
+import { parseQuestionsFromDocx, parseQuestionsFromXlsx } from "./quiz.import.js";
 
 import {
   getImageKey,
   getUploadUrl,
   removeUploadedFile,
+  saveImageBuffer,
 } from "../../config/multer.js";
 
 type QuizPatch = UpdateQuizData;
@@ -567,7 +571,11 @@ const applyQuestionUpdate = async (
 
 // All or nothing: a partially imported file is hard to fix and re-upload
 // without creating duplicates, so any unparseable question rejects the file.
-export const importQuestions = async (quizId: string, buffer: Buffer) => {
+export const importQuestions = async (
+  quizId: string,
+  buffer: Buffer,
+  kind: DocumentKind = "docx",
+) => {
   const quiz = await prisma.quiz.findUnique({
     where: {
       id: quizId,
@@ -584,13 +592,24 @@ export const importQuestions = async (quizId: string, buffer: Buffer) => {
   let parsed;
 
   try {
-    parsed = await parseQuestionsFromDocx(buffer);
-  } catch {
-    throw new AppError(400, "Could not read the document. Upload a valid .docx file");
+    parsed =
+      kind === "xlsx" ? await parseQuestionsFromXlsx(buffer) : await parseQuestionsFromDocx(buffer);
+  } catch (error) {
+    throw new AppError(
+      400,
+      kind === "xlsx"
+        ? `Could not read the spreadsheet. ${error instanceof Error ? error.message : ""}`.trim()
+        : "Could not read the document. Upload a valid .docx file",
+    );
   }
 
   if (!parsed.length) {
-    throw new AppError(400, 'No questions found. Each question must end with an "Ans: (x)" line');
+    throw new AppError(
+      400,
+      kind === "xlsx"
+        ? "No questions found in the first sheet"
+        : 'No questions found. Each question must end with an "Ans: (x)" line',
+    );
   }
 
   const failed = parsed.filter((entry) => entry.error);
@@ -605,61 +624,82 @@ export const importQuestions = async (quizId: string, buffer: Buffer) => {
     );
   }
 
-  const questions = await prisma.$transaction(
-    async (tx) => {
-      const lastQuestion = await tx.question.findFirst({
-        where: {
-          quizId,
-        },
-        orderBy: {
-          order: "desc",
-        },
-        select: {
-          order: true,
-        },
-      });
+  // Images are written only once the whole document is valid, and removed
+  // again if the questions cannot be saved.
+  const imageKeys: (string | undefined)[] = [];
 
-      let order = lastQuestion?.order ?? 0;
-      const created = [];
+  try {
+    for (const { image } of parsed) {
+      imageKeys.push(image ? await saveImageBuffer(image.buffer, image.contentType) : undefined);
+    }
+  } catch (error) {
+    await Promise.all(imageKeys.map((key) => key && removeUploadedFile(key)));
+    throw error;
+  }
 
-      for (const { data } of parsed) {
-        order += 1;
-
-        created.push(
-          await tx.question.create({
-            data: {
-              question: data!.question,
-              explanation: data!.explanation,
-              isActive: data!.isActive,
-              order,
-              quizId,
-
-              options: {
-                create: data!.options.map((option, index) => ({
-                  text: option.text,
-                  isCorrect: option.isCorrect,
-                  order: index + 1,
-                })),
-              },
-            },
-
-            include: {
-              options: {
-                orderBy: {
-                  order: "asc",
-                },
-              },
-            },
-          }),
-        );
-      }
-
-      return created;
+  const lastQuestion = await prisma.question.findFirst({
+    where: {
+      quizId,
     },
-    {
-      timeout: 60_000,
+    orderBy: {
+      order: "desc",
     },
+    select: {
+      order: true,
+    },
+  });
+
+  const firstOrder = (lastQuestion?.order ?? 0) + 1;
+
+  // Ids are generated up front so questions and options go in as two bulk
+  // inserts. Creating them one by one in an interactive transaction makes a
+  // round trip per row and outlives the transaction on large files.
+  const rows = parsed.map(({ data }, index) => ({
+    id: randomUUID(),
+    question: data!.question,
+    explanation: data!.explanation,
+    isActive: data!.isActive,
+    imageKey: imageKeys[index],
+    order: firstOrder + index,
+    quizId,
+  }));
+
+  const options = parsed.flatMap(({ data }, index) =>
+    data!.options.map((option, optionIndex) => ({
+      questionId: rows[index]!.id,
+      text: option.text,
+      isCorrect: option.isCorrect,
+      order: optionIndex + 1,
+    })),
   );
+
+  try {
+    await prisma.$transaction([
+      prisma.question.createMany({ data: rows }),
+      prisma.questionOption.createMany({ data: options }),
+    ]);
+  } catch (error) {
+    await Promise.all(imageKeys.map((key) => key && removeUploadedFile(key)));
+    throw error;
+  }
+
+  const questions = await prisma.question.findMany({
+    where: {
+      id: {
+        in: rows.map((row) => row.id),
+      },
+    },
+    orderBy: {
+      order: "asc",
+    },
+    include: {
+      options: {
+        orderBy: {
+          order: "asc",
+        },
+      },
+    },
+  });
 
   return {
     imported: questions.length,

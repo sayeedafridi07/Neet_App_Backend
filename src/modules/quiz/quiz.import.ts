@@ -1,5 +1,7 @@
+import ExcelJS from "exceljs";
 import mammoth from "mammoth";
 
+import { isSupportedImage } from "../../config/multer.js";
 import { createQuestionSchema, type CreateQuestionData } from "./quiz.schema.js";
 
 /* -------------------------------------------------------------------------- */
@@ -17,20 +19,29 @@ type TextToken = {
   // Word auto-numbered lists drop their "(a)" labels in the HTML output, so
   // the list a line belongs to is tracked to recover option order.
   listId?: number;
+  // Indexes into the document's extracted images.
+  images: number[];
 };
 
 type TableToken = {
   kind: "table";
   rows: string[][];
+  images: number[];
 };
 
 type Token = TextToken | TableToken;
 
 type Option = { letter: string; text: string };
 
+export type DocImage = {
+  buffer: Buffer;
+  contentType: string;
+};
+
 export type ParsedQuestion = {
   index: number;
   data?: CreateQuestionData;
+  image?: DocImage;
   error?: string;
   preview: string;
 };
@@ -98,12 +109,23 @@ const toMarkdown = (html: string) => {
   return tidyEmphasis(markdown);
 };
 
+// Images are emitted by parseQuestionsFromDocx as <img src="docx-image:N">.
+const IMAGE_SRC_PATTERN = /<img[^>]*src="docx-image:(\d+)"[^>]*>/gi;
+
+const imagesIn = (html: string) =>
+  [...html.matchAll(IMAGE_SRC_PATTERN)].map(([, index]) => Number(index));
+
 // Splits a fragment of HTML into its lines, honouring <br> inside a paragraph.
+// A line holding only an image is kept so the image stays with its question.
 const htmlToLines = (html: string) =>
   html
     .split(/<br\s*\/?>|<\/p>|<\/li>|<\/h\d>/i)
-    .map((line) => ({ text: cleanText(line), markdown: toMarkdown(line) }))
-    .filter((line) => line.text);
+    .map((line) => ({
+      text: cleanText(line),
+      markdown: toMarkdown(line),
+      images: imagesIn(line),
+    }))
+    .filter((line) => line.text || line.images.length);
 
 const tokenize = (html: string): Token[] => {
   const tokens: Token[] = [];
@@ -128,8 +150,14 @@ const tokenize = (html: string): Token[] => {
         )
         .filter((row) => row.some(Boolean));
 
+      const images = imagesIn(part);
+
+      // A table holding only an image (a common way to place a figure) is
+      // kept for the image alone.
       if (rows.length) {
-        tokens.push({ kind: "table", rows });
+        tokens.push({ kind: "table", rows, images });
+      } else if (images.length) {
+        tokens.push({ kind: "text", text: "", markdown: "", images });
       }
 
       continue;
@@ -376,6 +404,8 @@ const buildQuestion = (
   };
 };
 
+const imagesOf = (tokens: Token[]) => tokens.flatMap((token) => token.images);
+
 const previewOf = (tokens: Token[]) => {
   const first = tokens.find((token): token is TextToken => token.kind === "text");
 
@@ -388,7 +418,10 @@ const previewOf = (tokens: Token[]) => {
 
 // Each question ends at its "Ans: (x)" line. Explanation lines that follow an
 // answer are attached to that question rather than the next one.
-export const parseQuestionsFromHtml = (html: string): ParsedQuestion[] => {
+export const parseQuestionsFromHtml = (
+  html: string,
+  images: DocImage[] = [],
+): ParsedQuestion[] => {
   const tokens = tokenize(html);
 
   const results: ParsedQuestion[] = [];
@@ -399,6 +432,8 @@ export const parseQuestionsFromHtml = (html: string): ParsedQuestion[] => {
     options: Option[];
     answer: string;
     explanation: string[];
+    // Images found in the options or explanation, which have nowhere to go.
+    strayImages: number[];
   }[] = [];
 
   for (const token of tokens) {
@@ -413,15 +448,19 @@ export const parseQuestionsFromHtml = (html: string): ParsedQuestion[] => {
           options,
           answer: answer[1]!.toLowerCase(),
           explanation: [],
+          strayImages: [...imagesOf(block.slice(stem.length)), ...token.images],
         });
         block = [];
         continue;
       }
 
       if (EXPLANATION_PATTERN.test(token.text) && block.length === 0 && pending.length) {
-        pending[pending.length - 1]!.explanation.push(
+        const entry = pending[pending.length - 1]!;
+
+        entry.explanation.push(
           tidyEmphasis(token.markdown.replace(EXPLANATION_LABEL_PATTERN, "")),
         );
+        entry.strayImages.push(...token.images);
         continue;
       }
     }
@@ -447,6 +486,38 @@ export const parseQuestionsFromHtml = (html: string): ParsedQuestion[] => {
       return;
     }
 
+    // A question stores a single image, so it has to sit in the question text.
+    if (entry.strayImages.length) {
+      results.push({
+        index,
+        preview,
+        error: "Images are only supported in the question text, not in options or explanations",
+      });
+      return;
+    }
+
+    const stemImages = imagesOf(entry.stem);
+
+    if (stemImages.length > 1) {
+      results.push({
+        index,
+        preview,
+        error: `Only one image per question is supported (found ${stemImages.length})`,
+      });
+      return;
+    }
+
+    const image = stemImages.length ? images[stemImages[0]!] : undefined;
+
+    if (image && !isSupportedImage(image.contentType, image.buffer.length)) {
+      results.push({
+        index,
+        preview,
+        error: `Image (${image.contentType}) must be a JPEG, PNG, WebP or GIF under 5MB`,
+      });
+      return;
+    }
+
     const built = buildQuestion(
       entry.stem,
       entry.options,
@@ -467,7 +538,7 @@ export const parseQuestionsFromHtml = (html: string): ParsedQuestion[] => {
       return;
     }
 
-    results.push({ index, preview, data: parsed.data });
+    results.push({ index, preview, data: parsed.data, image });
   });
 
   const trailing = block.filter(
@@ -488,7 +559,134 @@ export const parseQuestionsFromHtml = (html: string): ParsedQuestion[] => {
 export const parseQuestionsFromDocx = async (
   buffer: Buffer,
 ): Promise<ParsedQuestion[]> => {
-  const { value: html } = await mammoth.convertToHtml({ buffer });
+  const images: DocImage[] = [];
 
-  return parseQuestionsFromHtml(html);
+  // Images are collected instead of inlined as base64; the service saves the
+  // ones that end up attached to a question.
+  const { value: html } = await mammoth.convertToHtml(
+    { buffer },
+    {
+      convertImage: mammoth.images.imgElement(async (image) => {
+        images.push({
+          buffer: await image.readAsBuffer(),
+          contentType: image.contentType,
+        });
+
+        return { src: `docx-image:${images.length - 1}` };
+      }),
+    },
+  );
+
+  return parseQuestionsFromHtml(html, images);
+};
+
+/* -------------------------------------------------------------------------- */
+/* SPREADSHEETS                                                               */
+/* -------------------------------------------------------------------------- */
+
+// Header names are matched loosely ("Option A", "option_a", "OptionA").
+const normalizeHeader = (value: string) => value.toLowerCase().replace(/[^a-z]/g, "");
+
+const cellText = (cell: ExcelJS.Cell) => {
+  const value = cell.value;
+
+  if (value && typeof value === "object" && "richText" in value) {
+    return value.richText.map((run) => run.text).join("").trim();
+  }
+
+  return (cell.text ?? "").trim();
+};
+
+// One question per row, with columns "Question", "Option A".."Option F",
+// "Answer" (a letter) and an optional "Explanation". Other columns are ignored.
+export const parseQuestionsFromXlsx = async (buffer: Buffer): Promise<ParsedQuestion[]> => {
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(buffer as unknown as ArrayBuffer);
+
+  const sheet = workbook.worksheets[0];
+
+  if (!sheet) {
+    return [];
+  }
+
+  const columns = new Map<string, number>();
+
+  sheet.getRow(1).eachCell((cell, column) => {
+    columns.set(normalizeHeader(cellText(cell)), column);
+  });
+
+  const questionColumn = columns.get("question");
+  const answerColumn = columns.get("answer");
+
+  if (!questionColumn || !answerColumn) {
+    throw new Error('The first row must have "Question" and "Answer" columns');
+  }
+
+  const explanationColumn = columns.get("explanation");
+  const optionColumns = OPTION_LETTERS.flatMap((letter) => {
+    const column = columns.get(`option${letter}`);
+    return column ? [{ letter, column }] : [];
+  });
+
+  const results: ParsedQuestion[] = [];
+
+  for (let rowNumber = 2; rowNumber <= sheet.rowCount; rowNumber += 1) {
+    const row = sheet.getRow(rowNumber);
+    const read = (column?: number) => (column ? cellText(row.getCell(column)) : "");
+
+    const question = read(questionColumn);
+    const answerText = read(answerColumn);
+
+    // Blank rows are skipped rather than reported.
+    if (!question && !answerText) {
+      continue;
+    }
+
+    const index = results.length + 1;
+    const preview = question.slice(0, 80);
+    const answer = answerText.match(/^\(?\s*([a-f])\s*\)?$/i)?.[1]?.toLowerCase();
+
+    if (!answer) {
+      results.push({ index, preview, error: `Row ${rowNumber}: answer must be a letter A-F` });
+      continue;
+    }
+
+    const options = optionColumns
+      .map(({ letter, column }) => ({ letter, text: read(column) }))
+      .filter((option) => option.text);
+
+    if (!options.some((option) => option.letter === answer)) {
+      results.push({
+        index,
+        preview,
+        error: `Row ${rowNumber}: answer (${answer}) does not match any option`,
+      });
+      continue;
+    }
+
+    const parsed = createQuestionSchema.safeParse({
+      question,
+      explanation: read(explanationColumn) || undefined,
+      isActive: true,
+      options: options.map((option) => ({
+        text: option.text,
+        isCorrect: option.letter === answer,
+      })),
+    });
+
+    if (!parsed.success) {
+      results.push({
+        index,
+        preview,
+        error: `Row ${rowNumber}: ${parsed.error.issues
+          .map((issue) => `${issue.path.join(".") || "question"}: ${issue.message}`)
+          .join(", ")}`,
+      });
+      continue;
+    }
+
+    results.push({ index, preview, data: parsed.data });
+  }
+
+  return results;
 };

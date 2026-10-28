@@ -2,6 +2,7 @@ import type { Request, Response, NextFunction } from "express";
 import * as quizService from "./quiz.service.js";
 import { sendResponse } from "../../utils/response.js";
 import { AppError } from "../../utils/app-error.js";
+import { getDocumentKind } from "../../config/multer.js";
 import { getQuizzesSchema, getQuestionsSchema } from "./quiz.schema.js";
 import {
   IMAGE_FIELD_NAME,
@@ -178,12 +179,13 @@ export const importQuestions = async (
 ) => {
   try {
     if (!req.file) {
-      throw new AppError(400, 'Upload a .docx file as "file"');
+      throw new AppError(400, 'Upload a .docx or .xlsx file as "file"');
     }
 
     const result = await quizService.importQuestions(
       req.params.quizId,
       req.file.buffer,
+      getDocumentKind(req.file.mimetype, req.file.originalname) ?? "docx",
     );
 
     return sendResponse(
