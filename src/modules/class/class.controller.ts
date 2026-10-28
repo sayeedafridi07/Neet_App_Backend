@@ -38,15 +38,12 @@ export const getClassById = async (
 };
 
 export const getClassBySlug = async (
-  req: Request<{ subjectId: string; slug: string }>,
+  req: Request<{ slug: string }>,
   res: Response,
   next: NextFunction,
 ) => {
   try {
-    const academicClass = await classService.getClassBySlug(
-      req.params.subjectId,
-      req.params.slug,
-    );
+    const academicClass = await classService.getClassBySlug(req.params.slug);
 
     if (!academicClass) {
       return sendResponse(res, 404, true, "Class not found");

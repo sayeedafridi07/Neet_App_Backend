@@ -17,7 +17,7 @@ export const getClasses = async (
           mode: "insensitive" as const,
         },
       }
-    : undefined;
+    : {};
 
   const [classes, total] = await Promise.all([
     prisma.academicClass.findMany({
@@ -53,44 +53,31 @@ export const getClassById = async (id: string) => {
   });
 };
 
-export const getClassBySlug = async (subjectId: string, slug: string) => {
+export const getClassBySlug = async (slug: string) => {
   return prisma.academicClass.findFirst({
     where: {
-      subjectId,
       slug,
     },
   });
 };
 
 export const createClass = async (data: CreateClassData) => {
-  const subject = await prisma.subject.findUnique({
-    where: {
-      id: data.subjectId,
-    },
-  });
-
-  if (!subject) {
-    throw new AppError(404, "Subject not found");
-  }
-
   const slug = generateSlug(data.name);
 
-  const existingClass = await prisma.academicClass.findFirst({
+  const existingClass = await prisma.academicClass.findUnique({
     where: {
-      subjectId: data.subjectId,
       slug,
     },
   });
 
   if (existingClass) {
-    throw new AppError(409, "Class with this name already exists in this subject");
+    throw new AppError(409, "Class with this name already exists");
   }
 
   return prisma.academicClass.create({
     data: {
       name: data.name,
       slug,
-      subjectId: data.subjectId,
     },
   });
 };

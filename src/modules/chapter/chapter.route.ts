@@ -24,7 +24,7 @@ router.use(
 
 router.get("/", getChapters);
 router.get("/:id", getChapterById);
-router.get("/class/:classId/slug/:slug", getChapterBySlug);
+router.get("/slug/:slug", getChapterBySlug);
 router.post("/", validate(createChapterSchema), createChapter);
 router.patch("/:id", validate(updateChapterSchema), updateChapter);
 router.delete("/:id", allowRoles(AdminRole.SUPER_ADMIN), deleteChapter);

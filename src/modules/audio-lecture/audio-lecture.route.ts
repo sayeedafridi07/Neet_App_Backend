@@ -6,6 +6,7 @@ import {
   getAudioLectureBySlug,
   createAudioLecture,
   updateAudioLecture,
+  toggleStatus,
   deleteAudioLecture,
 } from "./audio-lecture.controller.js";
 
@@ -41,6 +42,7 @@ router.patch(
   validate(updateAudioLectureSchema),
   updateAudioLecture,
 );
+router.patch("/:id/status", toggleStatus);
 router.delete("/:id", allowRoles(AdminRole.SUPER_ADMIN), deleteAudioLecture);
 
 export default router;

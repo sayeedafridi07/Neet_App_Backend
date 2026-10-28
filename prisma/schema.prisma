@@ -55,24 +55,17 @@ model Subject {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  classes AcademicClass[]
+  chapters Chapter[]
 }
 
 model AcademicClass {
   id        String   @id @default(uuid())
   name      String
-  slug      String
-
-  subjectId String
-  subject   Subject @relation(fields: [subjectId], references: [id])
-
-  chapters Chapter[]
-
+  slug      String   @unique
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@unique([subjectId, slug])
-  @@index([subjectId])
+  chapters Chapter[]
 }
 
 model Chapter {
@@ -84,6 +77,9 @@ model Chapter {
   classId String
   class   AcademicClass @relation(fields: [classId], references: [id])
 
+  subjectId String
+  subject   Subject @relation(fields: [subjectId], references: [id])
+
   audioLectures    AudioLecture[]
   keywordRevisions KeywordRevision[]
   quizzes          Quiz[]
@@ -91,8 +87,9 @@ model Chapter {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@unique([classId, slug])
+  @@unique([classId, subjectId, slug])
   @@index([classId])
+  @@index([subjectId])
 }
 
 model AudioLecture {

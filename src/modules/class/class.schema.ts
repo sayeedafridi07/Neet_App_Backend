@@ -2,8 +2,6 @@ import { z } from "zod";
 
 export const createClassSchema = z.object({
   name: z.string().trim().min(1, "Class name is required"),
-
-  subjectId: z.uuid("Invalid subject ID"),
 });
 
 export const updateClassSchema = z

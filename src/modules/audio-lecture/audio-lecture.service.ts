@@ -259,6 +259,29 @@ export const updateAudioLecture = async (
   }
 };
 
+export const toggleStatus = async (id: string) => {
+  const audioLecture = await prisma.audioLecture.findUnique({
+    where: {
+      id,
+    },
+  });
+
+  if (!audioLecture) {
+    throw new AppError(404, "Audio lecture not found");
+  }
+
+  const updated = await prisma.audioLecture.update({
+    where: {
+      id,
+    },
+    data: {
+      isActive: !audioLecture.isActive,
+    },
+  });
+
+  return formatAudioLecture(updated);
+};
+
 export const deleteAudioLecture = async (id: string) => {
   const audioLecture = await prisma.audioLecture.findUnique({
     where: {

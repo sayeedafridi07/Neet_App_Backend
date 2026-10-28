@@ -459,11 +459,16 @@ export const updateQuestion = async (
       });
     }
 
+    const updateData: any = { ...fields };
+    if ('content' in updateData && updateData.content === null) {
+      updateData.content = undefined;
+    }
+
     return tx.question.update({
       where: {
         id: questionId,
       },
-      data: fields,
+      data: updateData,
       include: {
         options: {
           orderBy: {

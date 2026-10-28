@@ -24,7 +24,7 @@ router.use(
 
 router.get("/", getClasses);
 router.get("/:id", getClassById);
-router.get("/subject/:subjectId/slug/:slug", getClassBySlug);
+router.get("/slug/:slug", getClassBySlug);
 router.post("/", validate(createClassSchema), createClass);
 router.patch("/:id", validate(updateClassSchema), updateClass);
 router.delete("/:id", allowRoles(AdminRole.SUPER_ADMIN), deleteClass);

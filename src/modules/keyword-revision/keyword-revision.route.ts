@@ -6,6 +6,7 @@ import {
   getKeywordRevisionBySlug,
   createKeywordRevision,
   updateKeywordRevision,
+  toggleStatus,
   deleteKeywordRevision,
 } from "./keyword-revision.controller.js";
 
@@ -41,6 +42,7 @@ router.patch(
   validate(updateKeywordRevisionSchema),
   updateKeywordRevision,
 );
+router.patch("/:id/status", toggleStatus);
 router.delete(
   "/:id",
   allowRoles(AdminRole.SUPER_ADMIN),

@@ -9,6 +9,7 @@ export const createChapterSchema = z.object({
     .min(1, "Order must be a positive integer"),
 
   classId: z.uuid("Invalid class ID"),
+  subjectId: z.uuid("Invalid subject ID"),
 });
 
 export const updateChapterSchema = z
@@ -30,6 +31,7 @@ export const getChapterSchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(20),
   search: z.string().trim().optional(),
   classId: z.uuid("Invalid class ID").optional(),
+  subjectId: z.uuid("Invalid subject ID").optional(),
 });
 
 export type CreateChapterData = z.infer<typeof createChapterSchema>;

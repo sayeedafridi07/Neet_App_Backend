@@ -78,7 +78,7 @@ export const createQuizSchema = z
   .object({
     title: z.string().trim().min(1, "Title is required"),
 
-    description: z.string().trim().min(1).optional(),
+    description: z.string().trim().optional(),
 
     type: z.enum(QuizType),
 
@@ -110,7 +110,7 @@ export const updateQuizSchema = z
   .object({
     title: z.string().trim().min(1, "Title is required").optional(),
 
-    description: z.string().trim().min(1).optional(),
+    description: z.string().trim().optional(),
 
     type: z.enum(QuizType).optional(),
 

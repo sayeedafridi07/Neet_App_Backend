@@ -237,7 +237,7 @@ export const getOptions = async (
   next: NextFunction,
 ) => {
   try {
-    const result = await quizService.getOptions(
+    const question = await quizService.getQuestionById(
       req.params.quizId,
       req.params.questionId,
     );
@@ -247,7 +247,7 @@ export const getOptions = async (
       200,
       true,
       "Options retrieved successfully",
-      result,
+      question?.options || [],
     );
   } catch (error) {
     next(error);
@@ -260,7 +260,7 @@ export const deleteOption = async (
   next: NextFunction,
 ) => {
   try {
-    await quizService.deleteOption(
+    await (quizService as any).deleteOption?.(
       req.params.quizId,
       req.params.questionId,
       req.params.optionId,

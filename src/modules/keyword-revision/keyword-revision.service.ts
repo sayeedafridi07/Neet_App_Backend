@@ -271,6 +271,30 @@ export const updateKeywordRevision = async (
   }
 };
 
+export const toggleStatus = async (id: string) => {
+  const keywordRevision =
+    await prisma.keywordRevision.findUnique({
+      where: {
+        id,
+      },
+    });
+
+  if (!keywordRevision) {
+    throw new AppError(404, "Keyword revision not found");
+  }
+
+  const updated = await prisma.keywordRevision.update({
+    where: {
+      id,
+    },
+    data: {
+      isActive: !keywordRevision.isActive,
+    },
+  });
+
+  return formatKeywordRevision(updated);
+};
+
 export const deleteKeywordRevision = async (
   id: string,
 ) => {

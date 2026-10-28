@@ -3,7 +3,7 @@ import { z } from "zod";
 export const createKeywordRevisionSchema = z.object({
   title: z.string().trim().min(1, "Title is required"),
 
-  description: z.string().trim().min(1).optional(),
+  description: z.string().trim().optional(),
 
   duration: z.coerce
     .number()
@@ -21,7 +21,7 @@ export const updateKeywordRevisionSchema = z
   .object({
     title: z.string().trim().min(1, "Title is required").optional(),
 
-    description: z.string().trim().min(1).optional(),
+    description: z.string().trim().optional(),
 
     duration: z.coerce
       .number()

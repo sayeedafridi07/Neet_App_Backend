@@ -8,11 +8,13 @@ export const getChapters = async (
   limit: number,
   search?: string,
   classId?: string,
+  subjectId?: string,
 ) => {
   const skip = (page - 1) * limit;
 
   const where = {
     ...(classId ? { classId } : {}),
+    ...(subjectId ? { subjectId } : {}),
 
     ...(search
       ? {
@@ -50,32 +52,54 @@ export const getChapters = async (
   };
 };
 
+const chapterCountsInclude = {
+  _count: {
+    select: {
+      audioLectures: true,
+      keywordRevisions: true,
+      quizzes: true,
+    },
+  },
+} as const;
+
 export const getChapterById = async (id: string) => {
   return prisma.chapter.findUnique({
     where: {
       id,
     },
+    include: chapterCountsInclude,
   });
 };
 
-export const getChapterBySlug = async (classId: string, slug: string) => {
+export const getChapterBySlug = async (slug: string) => {
   return prisma.chapter.findFirst({
     where: {
-      classId,
       slug,
     },
+    include: chapterCountsInclude,
   });
 };
 
 export const createChapter = async (data: CreateChapterData) => {
-  const academicClass = await prisma.academicClass.findUnique({
-    where: {
-      id: data.classId,
-    },
-  });
+  const [academicClass, subject] = await Promise.all([
+    prisma.academicClass.findUnique({
+      where: {
+        id: data.classId,
+      },
+    }),
+    prisma.subject.findUnique({
+      where: {
+        id: data.subjectId,
+      },
+    }),
+  ]);
 
   if (!academicClass) {
     throw new AppError(404, "Class not found");
+  }
+
+  if (!subject) {
+    throw new AppError(404, "Subject not found");
   }
 
   const slug = generateSlug(data.name);
@@ -83,12 +107,13 @@ export const createChapter = async (data: CreateChapterData) => {
   const existingChapter = await prisma.chapter.findFirst({
     where: {
       classId: data.classId,
+      subjectId: data.subjectId,
       slug,
     },
   });
 
   if (existingChapter) {
-    throw new AppError(409, "Chapter with this name already exists in this class");
+    throw new AppError(409, "Chapter with this name already exists in this class and subject");
   }
 
   return prisma.chapter.create({
@@ -97,6 +122,7 @@ export const createChapter = async (data: CreateChapterData) => {
       slug,
       order: data.order,
       classId: data.classId,
+      subjectId: data.subjectId,
     },
   });
 };
@@ -112,21 +138,38 @@ export const updateChapter = async (id: string, data: UpdateChapterData) => {
     throw new AppError(404, "Chapter not found");
   }
 
-  if (!data.name) {
-    return prisma.chapter.update({
+  const newClassId = (data as any).classId ?? chapter.classId;
+  const newSubjectId = (data as any).subjectId ?? chapter.subjectId;
+
+  if ((data as any).classId) {
+    const academicClass = await prisma.academicClass.findUnique({
       where: {
-        id,
+        id: (data as any).classId,
       },
-      data,
     });
+    if (!academicClass) {
+      throw new AppError(404, "Class not found");
+    }
   }
 
-  const slug = generateSlug(data.name);
+  if ((data as any).subjectId) {
+    const subject = await prisma.subject.findUnique({
+      where: {
+        id: (data as any).subjectId,
+      },
+    });
+    if (!subject) {
+      throw new AppError(404, "Subject not found");
+    }
+  }
 
-  if (slug !== chapter.slug) {
+  let slug = chapter.slug;
+  if ((data as any).name) {
+    slug = generateSlug((data as any).name);
     const existingChapter = await prisma.chapter.findFirst({
       where: {
-        classId: chapter.classId,
+        classId: newClassId,
+        subjectId: newSubjectId,
         slug,
         NOT: {
           id,
@@ -135,18 +178,35 @@ export const updateChapter = async (id: string, data: UpdateChapterData) => {
     });
 
     if (existingChapter) {
-      throw new AppError(409, "Chapter with this name already exists in this class");
+      throw new AppError(409, "Chapter with this name already exists in this class and subject");
     }
+  } else if ((data as any).classId || (data as any).subjectId) {
+    const existingChapter = await prisma.chapter.findFirst({
+      where: {
+        classId: newClassId,
+        subjectId: newSubjectId,
+        slug,
+        NOT: {
+          id,
+        },
+      },
+    });
+
+    if (existingChapter) {
+      throw new AppError(409, "Chapter with this name already exists in this class and subject");
+    }
+  }
+
+  const updateData: any = { ...data };
+  if ((data as any).name) {
+    updateData.slug = slug;
   }
 
   return prisma.chapter.update({
     where: {
       id,
     },
-    data: {
-      ...data,
-      slug,
-    },
+    data: updateData,
   });
 };
 

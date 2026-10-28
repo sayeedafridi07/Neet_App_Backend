@@ -103,6 +103,26 @@ export const updateKeywordRevision = async (
   }
 };
 
+export const toggleStatus = async (
+  req: Request<{ id: string }>,
+  res: Response,
+  next: NextFunction,
+) => {
+  try {
+    const keywordRevision = await keywordRevisionService.toggleStatus(req.params.id);
+
+    return sendResponse(
+      res,
+      200,
+      true,
+      "Keyword revision status updated successfully",
+      keywordRevision,
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
 export const deleteKeywordRevision = async (
   req: Request<{ id: string }>,
   res: Response,

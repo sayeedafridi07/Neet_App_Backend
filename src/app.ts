@@ -12,7 +12,12 @@ import { getUploadRoot } from "./config/multer.js";
 
 const app = express();
 
-app.use(helmet());
+app.use(
+  helmet({
+    // Let the admin/app (different origin) load files from /uploads
+    crossOriginResourcePolicy: { policy: "cross-origin" },
+  }),
+);
 app.use(cors());
 app.use(express.json());
 

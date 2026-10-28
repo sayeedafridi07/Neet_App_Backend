@@ -9,9 +9,9 @@ export const getChapters = async (
   next: NextFunction,
 ) => {
   try {
-    const { page, limit, search, classId } = getChapterSchema.parse(req.query);
+    const { page, limit, search, classId, subjectId } = getChapterSchema.parse(req.query);
 
-    const result = await chapterService.getChapters(page, limit, search, classId);
+    const result = await chapterService.getChapters(page, limit, search, classId, subjectId);
 
     return sendResponse(res, 200, true, "Chapters retrieved successfully", result);
   } catch (error) {
@@ -38,15 +38,12 @@ export const getChapterById = async (
 };
 
 export const getChapterBySlug = async (
-  req: Request<{ classId: string; slug: string }>,
+  req: Request<{ slug: string }>,
   res: Response,
   next: NextFunction,
 ) => {
   try {
-    const chapter = await chapterService.getChapterBySlug(
-      req.params.classId,
-      req.params.slug,
-    );
+    const chapter = await chapterService.getChapterBySlug(req.params.slug);
 
     if (!chapter) {
       return sendResponse(res, 404, true, "Chapter not found");

@@ -26,7 +26,7 @@ export const AUDIO_MIME_TYPES = [
   "audio/ogg",
 ] as const;
 
-const MAX_FILE_SIZE = 100 * 1024 * 1024;
+const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100MB
 
 export const getUploadRoot = () => {
   return path.resolve(process.cwd(), "uploads");

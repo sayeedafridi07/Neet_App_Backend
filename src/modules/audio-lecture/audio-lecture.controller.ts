@@ -103,6 +103,26 @@ export const updateAudioLecture = async (
   }
 };
 
+export const toggleStatus = async (
+  req: Request<{ id: string }>,
+  res: Response,
+  next: NextFunction,
+) => {
+  try {
+    const audioLecture = await audioLectureService.toggleStatus(req.params.id);
+
+    return sendResponse(
+      res,
+      200,
+      true,
+      "Audio lecture status updated successfully",
+      audioLecture,
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
 export const deleteAudioLecture = async (
   req: Request<{ id: string }>,
   res: Response,
