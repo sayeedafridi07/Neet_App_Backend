@@ -28,7 +28,9 @@ model User {
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
-  quizAttempts QuizAttempt[]
+  quizAttempts  QuizAttempt[]
+  subscriptions Subscription[]
+  payments      Payment[]
 }
 
 model Admin {
@@ -183,6 +185,8 @@ model Question {
   explanation String?
   imageKey    String?
 
+  explanationImageKey String?
+
   order    Int
   isActive Boolean @default(true)
 
@@ -204,6 +208,7 @@ model QuestionOption {
 
   text      String
   isCorrect Boolean @default(false)
+  imageKey  String?
 
   order Int
 
@@ -289,4 +294,106 @@ model QuizAttemptAnswer {
   @@unique([attemptId, questionId])
   @@index([attemptId, questionOrder])
   @@index([questionId])
+}
+
+model SubscriptionPlan {
+  id          String  @id @default(uuid())
+  name        String
+  slug        String  @unique
+  description String?
+
+  // Amounts stored in the smallest currency unit (paise)
+  price         Int
+  originalPrice Int?
+  currency      String @default("INR")
+
+  durationDays Int
+
+  // Feature list shown to users, e.g. ["Audio lectures", "Test series"]
+  features Json?
+
+  order    Int     @default(0)
+  isActive Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  subscriptions Subscription[]
+
+  @@index([isActive])
+}
+
+enum SubscriptionStatus {
+  PENDING
+  ACTIVE
+  EXPIRED
+  CANCELLED
+}
+
+model Subscription {
+  id String @id @default(uuid())
+
+  userId String
+  user   User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  planId String
+  plan   SubscriptionPlan @relation(fields: [planId], references: [id], onDelete: Restrict)
+
+  status SubscriptionStatus @default(PENDING)
+
+  startsAt    DateTime?
+  expiresAt   DateTime?
+  cancelledAt DateTime?
+
+  // Snapshot of the plan at purchase time.
+  // This protects historical subscriptions from later admin edits.
+  planSnapshot Json
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  payments Payment[]
+
+  @@index([userId])
+  @@index([planId])
+  @@index([status])
+  @@index([expiresAt])
+}
+
+enum PaymentStatus {
+  CREATED
+  SUCCESS
+  FAILED
+  REFUNDED
+}
+
+model Payment {
+  id String @id @default(uuid())
+
+  userId String
+  user   User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  subscriptionId String
+  subscription   Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+
+  // Amount in the smallest currency unit (paise)
+  amount   Int
+  currency String @default("INR")
+
+  status PaymentStatus @default(CREATED)
+
+  provider          String  @default("RAZORPAY")
+  providerOrderId   String  @unique
+  providerPaymentId String? @unique
+  providerSignature String?
+
+  failureReason String?
+  paidAt        DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([subscriptionId])
+  @@index([status])
 }

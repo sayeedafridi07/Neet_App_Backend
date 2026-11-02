@@ -192,7 +192,9 @@ export const importQuestions = async (
       res,
       201,
       true,
-      `${result.imported} question(s) imported successfully`,
+      result.skipped.length
+        ? `${result.imported} of ${result.total} question(s) imported, ${result.skipped.length} skipped`
+        : `${result.imported} of ${result.total} question(s) imported successfully`,
       result,
     );
   } catch (error) {

@@ -1,37 +1,11 @@
+import * as cheerio from "cheerio";
+import type { AnyNode } from "domhandler";
 import ExcelJS from "exceljs";
 import mammoth from "mammoth";
 
 import { isSupportedImage } from "../../config/multer.js";
+import { replaceEquations } from "./quiz.omml.js";
 import { createQuestionSchema, type CreateQuestionData } from "./quiz.schema.js";
-
-/* -------------------------------------------------------------------------- */
-/* TOKENS                                                                     */
-/* -------------------------------------------------------------------------- */
-
-// The document is flattened into paragraphs and tables. Tables are kept as
-// rows of cells so options laid out in a grid can still be recovered.
-type TextToken = {
-  kind: "text";
-  // Plain text, used to recognise answers, options and labels.
-  text: string;
-  // The same line with formatting kept, which is what gets stored.
-  markdown: string;
-  // Word auto-numbered lists drop their "(a)" labels in the HTML output, so
-  // the list a line belongs to is tracked to recover option order.
-  listId?: number;
-  // Indexes into the document's extracted images.
-  images: number[];
-};
-
-type TableToken = {
-  kind: "table";
-  rows: string[][];
-  images: number[];
-};
-
-type Token = TextToken | TableToken;
-
-type Option = { letter: string; text: string };
 
 export type DocImage = {
   buffer: Buffer;
@@ -42,145 +16,11 @@ export type ParsedQuestion = {
   index: number;
   data?: CreateQuestionData;
   image?: DocImage;
+  // Lined up with data.options.
+  optionImages?: (DocImage | undefined)[];
+  explanationImage?: DocImage;
   error?: string;
   preview: string;
-};
-
-const ENTITIES: Record<string, string> = {
-  amp: "&",
-  lt: "<",
-  gt: ">",
-  quot: '"',
-  apos: "'",
-  nbsp: " ",
-};
-
-const decodeEntities = (value: string) =>
-  value.replace(/&(#x?[0-9a-f]+|[a-z]+);/gi, (match, entity: string) => {
-    if (entity.startsWith("#x") || entity.startsWith("#X")) {
-      return String.fromCodePoint(parseInt(entity.slice(2), 16));
-    }
-
-    if (entity.startsWith("#")) {
-      return String.fromCodePoint(parseInt(entity.slice(1), 10));
-    }
-
-    return ENTITIES[entity.toLowerCase()] ?? match;
-  });
-
-const cleanText = (value: string) =>
-  decodeEntities(value.replace(/<[^>]+>/g, ""))
-    .replace(/\s+/g, " ")
-    .trim();
-
-// Labels cut out of a formatted line ("**(a)** Lamarck") leave a stray "**".
-const tidyEmphasis = (value: string) => {
-  const text = value.trim();
-
-  if ((text.match(/\*\*/g)?.length ?? 0) % 2 === 0) {
-    return text;
-  }
-
-  return text.replace(/^\*\*\s*|\s*\*\*$/, "").trim();
-};
-
-// Keeps the formatting the frontend renders: bold, italics and LaTeX-style
-// superscripts/subscripts (m/s<sup>2</sup> -> m/s$^{2}$).
-const toMarkdown = (html: string) => {
-  const markdown = decodeEntities(
-    html
-      .replace(/<sup[^>]*>([\s\S]*?)<\/sup>/gi, (_, inner: string) => {
-        const text = cleanText(inner);
-        return text ? `$^{${text}}$` : "";
-      })
-      .replace(/<sub[^>]*>([\s\S]*?)<\/sub>/gi, (_, inner: string) => {
-        const text = cleanText(inner);
-        return text ? `$_{${text}}$` : "";
-      })
-      .replace(/<\/?(?:strong|b)(?:\s[^>]*)?>/gi, "**")
-      .replace(/<\/?(?:em|i)(?:\s[^>]*)?>/gi, "*")
-      .replace(/<[^>]+>/g, ""),
-  )
-    .replace(/\s+/g, " ")
-    // Adjacent runs ("**A****B**") and empty runs ("** **") collapse.
-    .replace(/\*\*\s*\*\*/g, (gap) => (gap.length > 4 ? " " : ""))
-    .trim();
-
-  return tidyEmphasis(markdown);
-};
-
-// Images are emitted by parseQuestionsFromDocx as <img src="docx-image:N">.
-const IMAGE_SRC_PATTERN = /<img[^>]*src="docx-image:(\d+)"[^>]*>/gi;
-
-const imagesIn = (html: string) =>
-  [...html.matchAll(IMAGE_SRC_PATTERN)].map(([, index]) => Number(index));
-
-// Splits a fragment of HTML into its lines, honouring <br> inside a paragraph.
-// A line holding only an image is kept so the image stays with its question.
-const htmlToLines = (html: string) =>
-  html
-    .split(/<br\s*\/?>|<\/p>|<\/li>|<\/h\d>/i)
-    .map((line) => ({
-      text: cleanText(line),
-      markdown: toMarkdown(line),
-      images: imagesIn(line),
-    }))
-    .filter((line) => line.text || line.images.length);
-
-const tokenize = (html: string): Token[] => {
-  const tokens: Token[] = [];
-  let listCounter = 0;
-
-  const parts = html.split(/(<table[\s\S]*?<\/table>|<ol[\s\S]*?<\/ol>)/i);
-
-  for (const part of parts) {
-    if (!part) {
-      continue;
-    }
-
-    if (/^<table/i.test(part)) {
-      const rows = [...part.matchAll(/<tr[^>]*>([\s\S]*?)<\/tr>/gi)]
-        .map(([, row]) =>
-          [...row!.matchAll(/<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/gi)].map(
-            ([, cell]) =>
-              htmlToLines(cell!)
-                .map((line) => line.markdown)
-                .join(" "),
-          ),
-        )
-        .filter((row) => row.some(Boolean));
-
-      const images = imagesIn(part);
-
-      // A table holding only an image (a common way to place a figure) is
-      // kept for the image alone.
-      if (rows.length) {
-        tokens.push({ kind: "table", rows, images });
-      } else if (images.length) {
-        tokens.push({ kind: "text", text: "", markdown: "", images });
-      }
-
-      continue;
-    }
-
-    if (/^<ol/i.test(part)) {
-      listCounter += 1;
-
-      for (const [, item] of part.matchAll(/<li[^>]*>([\s\S]*?)<\/li>/gi)) {
-        for (const line of htmlToLines(item!)) {
-          tokens.push({ kind: "text", ...line, listId: listCounter });
-        }
-      }
-
-      continue;
-    }
-
-    for (const line of htmlToLines(part)) {
-      tokens.push({ kind: "text", ...line });
-    }
-  }
-
-  return tokens;
 };
 
 /* -------------------------------------------------------------------------- */
@@ -189,382 +29,393 @@ const tokenize = (html: string): Token[] => {
 
 const OPTION_LETTERS = ["a", "b", "c", "d", "e", "f"];
 
-const ANSWER_PATTERN = /^(?:ans(?:wer)?|correct\s+(?:answer|option))\s*[:.\-–]?\s*\(?\s*([a-f])\s*\)?/i;
+const PATTERNS = {
+  // A bare number needs a space after its label, so "1.08 = charge" in an
+  // explanation is not read as question 1.
+  question: /^(?:(?:Q(?:uestion|ues)?\s*\.?\s*\d+|Q\s*-\s*\d+)[.:)]\s*|\d+[.:)](?:\s+|$))(.*)$/is,
 
-const OPTION_PATTERN = /^\(\s*([a-f])\s*\)\s*(.*)$|^([a-f])[.)]\s+(.*)$/i;
+  option: /^(?:Option\s+)?(?:\(([a-f1-6])\)|\[([a-f1-6])\]|([a-f1-6])\s*[).:])\s*(.*)$/is,
 
-// Same shapes as OPTION_PATTERN, allowing the label itself to be bold/italic.
-const OPTION_LABEL_PATTERN = /^(\*\*)?\s*(?:\(\s*[a-f]\s*\)|[a-f][.)])\s*\1\s*/i;
+  answer:
+    /^(?:(?:Correct\s+)?(?:Ans(?:wer)?)|Correct\s+(?:Answer|Option))\s*[:.\-–]?\s*(?:Option\s*)?\(?\s*([a-f1-6])\s*\)?\s*\.?$/i,
 
-const EXPLANATION_PATTERN = /^(?:explanation|solution|sol|hint)\s*[:.\-–]\s*(.*)$/i;
-
-const EXPLANATION_LABEL_PATTERN = /^(\*\*)?\s*(?:explanation|solution|sol|hint)\s*[:.\-–]\s*\1\s*/i;
-
-const QUESTION_NUMBER_PATTERN = /^(?:q(?:uestion)?\s*\.?\s*)?\d{1,3}\s*[.):]\s+/i;
-
-const QUESTION_NUMBER_LABEL_PATTERN = /^(\**)\s*(?:q(?:uestion)?\s*\.?\s*)?\d{1,3}\s*[.):]\s+/i;
-
-// "Assertion (A):", "Reason (R):", "Statement I:" are bolded like the
-// questions created through the API.
-const LABEL_PATTERN =
-  /^((?:assertion|reason)\s*(?:\(\s*[ar]\s*\))?|statement\s*(?:[ivx]+|\d+))\s*:\s*/i;
-
-const OPTIONS_HEADING_PATTERN = /^options?\s*:?$/i;
-
-/* -------------------------------------------------------------------------- */
-/* OPTIONS                                                                    */
-/* -------------------------------------------------------------------------- */
-
-// "(a) Lamarck (b) Ernst Mayr (c) ..." on one line. Only labels that follow
-// in sequence split the line, so "(a) (a)" stays a single option.
-const splitInlineOptions = (text: string, startLetter: string) => {
-  const options: Option[] = [];
-  const matcher = /\(\s*([a-f])\s*\)/gi;
-
-  let expected = OPTION_LETTERS.indexOf(startLetter);
-  let current: { letter: string; start: number } | null = null;
-
-  for (const match of text.matchAll(matcher)) {
-    const letter = match[1]!.toLowerCase();
-
-    if (OPTION_LETTERS.indexOf(letter) !== expected) {
-      continue;
-    }
-
-    if (current) {
-      options.push({
-        letter: current.letter,
-        text: tidyEmphasis(text.slice(current.start, match.index)),
-      });
-    }
-
-    current = { letter, start: match.index! + match[0].length };
-    expected += 1;
-  }
-
-  if (current) {
-    options.push({ letter: current.letter, text: tidyEmphasis(text.slice(current.start)) });
-  }
-
-  return options;
+  explanation: /^(?:Explanation|Exp|Sol|Solution|Hint|Reason)\s*[:.\-–]\s*(.*)$/is,
 };
 
-// Matching runs on the plain text; the stored option text is the markdown.
-const parseOptionLine = (text: string, markdown = text) => {
-  const match = text.match(OPTION_PATTERN);
+// 1 -> a, 2 -> b, etc.
+const normalizeOption = (label: string) => {
+  const value = label.toLowerCase();
+
+  return /^[1-6]$/.test(value) ? OPTION_LETTERS[Number(value) - 1]! : value;
+};
+
+// Labels like "**Q1. **Text" or "**Ans: (d)**" are bolded in some docs,
+// which breaks the anchored patterns. Unwrap the leading bold if that helps.
+const unwrapBoldPrefix = (line: string) => {
+  const match = line.match(/^(\*{1,2})(.*?)\1(.*)$/s);
 
   if (!match) {
-    return null;
+    return line;
   }
 
-  const letter = (match[1] ?? match[3])!.toLowerCase();
-  const inline = splitInlineOptions(markdown, letter);
+  const candidate = (match[2]! + match[3]!).trim();
+  const matchesAny = Object.values(PATTERNS).some((pattern) => pattern.test(candidate));
 
-  if (inline.length > 1) {
-    return inline;
-  }
-
-  return [{ letter, text: tidyEmphasis(markdown.replace(OPTION_LABEL_PATTERN, "")) }];
+  return matchesAny ? candidate : line;
 };
 
-// Options are the trailing run of "(a)".."(d)" lines before the answer. The
-// scan walks backwards so labels inside the stem (e.g. table rows) are left
-// alone.
-const extractOptions = (tokens: Token[]) => {
-  const options: Option[] = [];
-  let cursor = tokens.length - 1;
+/* -------------------------------------------------------------------------- */
+/* BLOCKS                                                                     */
+/* -------------------------------------------------------------------------- */
 
-  while (cursor >= 0) {
-    const token = tokens[cursor]!;
+// A paragraph line or a whole table, as markdown, with the indexes of the
+// document images it holds.
+type Block = {
+  text: string;
+  images: number[];
+};
 
-    if (token.kind !== "text") {
-      break;
-    }
+// Images are emitted by parseQuestionsFromDocx as <img src="docx-image:N">.
+const IMAGE_SRC_PATTERN = /^docx-image:(\d+)$/;
 
-    const parsed = parseOptionLine(token.text, token.markdown);
-
-    if (!parsed) {
-      break;
-    }
-
-    options.unshift(...parsed);
-    cursor -= 1;
-
-    if (parsed[0]!.letter === "a") {
-      break;
-    }
+// Keeps the formatting the frontend renders: bold, italics and LaTeX-style
+// superscripts/subscripts (m/s<sup>2</sup> -> m/s$^{2}$).
+const toMarkdown = ($: cheerio.CheerioAPI, node: AnyNode, images: number[]): string => {
+  if (node.type === "text") {
+    return node.data ?? "";
   }
 
-  if (options.length && options[0]!.letter === "a") {
-    return { options, stem: tokens.slice(0, cursor + 1) };
+  if (node.type !== "tag") {
+    return "";
   }
 
-  // Word numbered list: "(a)" is list formatting, not text.
-  const last = tokens[tokens.length - 1];
+  if (node.name === "img") {
+    const index = ($(node).attr("src") ?? "").match(IMAGE_SRC_PATTERN)?.[1];
 
-  if (last?.kind === "text" && last.listId !== undefined) {
-    let start = tokens.length - 1;
+    if (index !== undefined) {
+      images.push(Number(index));
+    }
 
-    while (start > 0) {
-      const previous = tokens[start - 1]!;
+    return "";
+  }
 
-      if (previous.kind !== "text" || previous.listId !== last.listId) {
-        break;
+  const content = node.children.map((child) => toMarkdown($, child, images)).join("");
+
+  // Empty runs would otherwise leave stray "****" behind.
+  if (!content.trim() && node.name !== "br") {
+    return content;
+  }
+
+  switch (node.name) {
+    case "strong":
+    case "b":
+      return `**${content}**`;
+
+    case "em":
+    case "i":
+      return `*${content}*`;
+
+    case "sub":
+      return `$_{${content.trim()}}$`;
+
+    case "sup":
+      return `$^{${content.trim()}}$`;
+
+    case "br":
+      return "\n";
+
+    case "a": {
+      const href = $(node).attr("href");
+      return href && !href.startsWith("#") ? `[${content}](${href})` : content;
+    }
+
+    default:
+      return content;
+  }
+};
+
+const tidy = (markdown: string) =>
+  markdown
+    .replace(/[ \t ]+/g, " ")
+    // Adjacent runs ("**A****B**") merge.
+    .replace(/\*\*\*\*/g, "")
+    .trim();
+
+const tableToMarkdown = ($: cheerio.CheerioAPI, table: AnyNode, images: number[]) => {
+  const rows: string[][] = [];
+
+  $(table)
+    .find("tr")
+    .each((_, row) => {
+      const cells = $(row)
+        .children("th, td")
+        .toArray()
+        .map((cell) =>
+          tidy(toMarkdown($, cell, images).replace(/\s*\n\s*/g, " ")).replace(/\|/g, "\\|"),
+        );
+
+      if (cells.some(Boolean)) {
+        rows.push(cells);
       }
+    });
 
-      start -= 1;
-    }
-
-    const items = tokens.slice(start) as TextToken[];
-
-    if (items.length >= 2 && items.length <= OPTION_LETTERS.length) {
-      return {
-        options: items.map((item, index) => ({
-          letter: OPTION_LETTERS[index]!,
-          text: item.markdown,
-        })),
-        stem: tokens.slice(0, start),
-      };
-    }
+  if (!rows.length) {
+    return "";
   }
 
-  // Options laid out in a table, e.g. a 2x2 grid of "(a) ..." cells.
-  if (last?.kind === "table") {
-    const cells = last.rows.flat().filter(Boolean);
-    const parsed = cells.map((cell) => parseOptionLine(cell.replace(/\*/g, ""), cell));
-
-    if (parsed.length >= 2 && parsed.every(Boolean)) {
-      return {
-        options: parsed.flatMap((option) => option!),
-        stem: tokens.slice(0, -1),
-      };
-    }
-  }
-
-  return { options: [], stem: tokens };
-};
-
-/* -------------------------------------------------------------------------- */
-/* QUESTION BUILDING                                                          */
-/* -------------------------------------------------------------------------- */
-
-const escapeCell = (cell: string) => cell.replace(/\|/g, "\\|");
-
-// Rows are padded to the widest row; the first row is the header.
-const tableToMarkdown = (rows: string[][]) => {
   const width = Math.max(...rows.map((row) => row.length));
   const line = (row: string[]) =>
-    `| ${Array.from({ length: width }, (_, i) => escapeCell(row[i] ?? "")).join(" | ")} |`;
+    `| ${Array.from({ length: width }, (_, i) => row[i] ?? "").join(" | ")} |`;
 
-  return [line(rows[0]!), `|${"---|".repeat(width)}`, ...rows.slice(1).map(line)].join("\n");
+  return [line(rows[0]!), `|${" --- |".repeat(width)}`, ...rows.slice(1).map(line)].join("\n");
 };
 
-const formatLine = (markdown: string) =>
-  markdown.replace(LABEL_PATTERN, (_, label: string) => `**${label.trim()}:** `);
+const extractBlocks = (html: string): Block[] => {
+  const $ = cheerio.load(html);
+  const blocks: Block[] = [];
 
-const buildQuestion = (
-  stem: Token[],
-  options: Option[],
-  answer: string,
-  explanation: string | undefined,
-): CreateQuestionData => {
-  // A lone "Options" heading sits between the stem and the options.
-  const tokens = stem.filter(
-    (token) => !(token.kind === "text" && OPTIONS_HEADING_PATTERN.test(token.text)),
-  );
-
-  const firstLine = tokens.findIndex((token) => token.kind === "text");
-
-  if (firstLine !== -1) {
-    const token = tokens[firstLine] as TextToken;
-
-    if (QUESTION_NUMBER_PATTERN.test(token.text)) {
-      tokens[firstLine] = {
-        ...token,
-        markdown: tidyEmphasis(token.markdown.replace(QUESTION_NUMBER_LABEL_PATTERN, "$1")),
-      };
+  const visit = (element: AnyNode) => {
+    if (element.type !== "tag") {
+      return;
     }
+
+    if (element.name === "table") {
+      const images: number[] = [];
+      const text = tableToMarkdown($, element, images);
+
+      // A table holding only an image (a common way to place a figure) is
+      // kept for the image alone.
+      if (text || images.length) {
+        blocks.push({ text, images });
+      }
+
+      return;
+    }
+
+    if (element.name === "ol" || element.name === "ul") {
+      $(element).children("li").each((_, item) => visit(item));
+      return;
+    }
+
+    if (!["p", "li", "h1", "h2", "h3", "h4", "h5", "h6"].includes(element.name)) {
+      return;
+    }
+
+    // Nested lists inside an item are visited on their own.
+    const inline = element.children.filter(
+      (child) => !(child.type === "tag" && (child.name === "ol" || child.name === "ul")),
+    );
+
+    const images: number[] = [];
+    const markdown = inline.map((child) => toMarkdown($, child, images)).join("");
+
+    // A <br> splits a paragraph into lines. Images stay with the first line.
+    markdown
+      .split("\n")
+      .map(tidy)
+      .forEach((text, index) => {
+        if (text || (index === 0 && images.length)) {
+          blocks.push({ text, images: index === 0 ? images : [] });
+        }
+      });
+
+    $(element).children("ol, ul").each((_, list) => visit(list));
+  };
+
+  $("body").children().each((_, element) => visit(element));
+
+  return blocks;
+};
+
+/* -------------------------------------------------------------------------- */
+/* PARSING                                                                    */
+/* -------------------------------------------------------------------------- */
+
+type Draft = {
+  question: string[];
+  // raw keeps the original line in case the option turns out to be stem text.
+  options: { label: string; raw: string; text: string[]; images: number[] }[];
+  explanation: string[];
+  answer: string | null;
+  questionImages: number[];
+  explanationImages: number[];
+};
+
+const plain = (markdown: string) => markdown.replace(/\*+|\$[_^]\{|\}\$/g, "").trim();
+
+const join = (lines: string[]) =>
+  lines
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .join("\n\n");
+
+const validate = (draft: Draft, index: number, images: DocImage[]): ParsedQuestion => {
+  const preview = plain(draft.question.find(Boolean) ?? "").slice(0, 80);
+  const fail = (error: string): ParsedQuestion => ({ index, preview, error });
+
+  if (!draft.options.length) {
+    return fail("No options found");
   }
 
-  // Paragraphs and tables are separate markdown blocks.
-  const blocks = tokens
-    .map((token) =>
-      token.kind === "text" ? formatLine(token.markdown) : tableToMarkdown(token.rows),
-    )
-    .filter(Boolean);
+  if (!draft.answer) {
+    return fail('Question has no "Ans:" line');
+  }
+
+  if (!draft.options.some((option) => option.label === draft.answer)) {
+    return fail(`Answer (${draft.answer}) does not match any option`);
+  }
+
+  // The question, each option and the explanation store one image each, so
+  // only the first usable one is kept. Formats browsers cannot show (WMF/EMF
+  // equations) and oversized images are skipped.
+  const pick = (indexes: number[]) =>
+    indexes
+      .map((i) => images[i]!)
+      .find((entry) => isSupportedImage(entry.contentType, entry.buffer.length));
+
+  const image = pick(draft.questionImages);
+  const optionImages = draft.options.map((option) => pick(option.images));
+  const explanationImage = pick(draft.explanationImages);
+  const optionTexts = draft.options.map((option) => option.text.join("\n").trim());
+
+  const parsed = createQuestionSchema.safeParse({
+    question: join(draft.question),
+    explanation: join(draft.explanation) || undefined,
+    isActive: true,
+    options: draft.options.map((option, i) => ({
+      // An option can be just an image, which the schema would reject as empty.
+      text: optionTexts[i] || (optionImages[i] ? "image" : ""),
+      isCorrect: option.label === draft.answer,
+    })),
+  });
+
+  if (!parsed.success) {
+    return fail(
+      parsed.error.issues
+        .map((issue) => `${issue.path.join(".") || "question"}: ${issue.message}`)
+        .join(", "),
+    );
+  }
+
+  parsed.data.options.forEach((option, i) => {
+    option.text = optionTexts[i]!;
+  });
 
   return {
-    question: blocks.join("\n\n"),
-    explanation,
-    isActive: true,
-    options: options.map((option) => ({
-      text: option.text,
-      isCorrect: option.letter === answer,
-    })),
+    index,
+    preview,
+    data: parsed.data,
+    image,
+    optionImages,
+    explanationImage,
   };
 };
 
-const imagesOf = (tokens: Token[]) => tokens.flatMap((token) => token.images);
+// Each question starts at its numbered line ("Q1.", "1)", "Question 2:"),
+// followed by its options, an "Ans: (x)" line and an optional explanation.
+export const parseQuestionsFromHtml = (html: string, images: DocImage[] = []): ParsedQuestion[] => {
+  const drafts: Draft[] = [];
 
-const previewOf = (tokens: Token[]) => {
-  const first = tokens.find((token): token is TextToken => token.kind === "text");
+  let current: Draft | null = null;
+  let section: "question" | "options" | "explanation" = "question";
 
-  return (first?.text ?? "").slice(0, 80);
-};
+  for (const block of extractBlocks(html)) {
+    const line = unwrapBoldPrefix(block.text);
+    // Numbered lines before the answer ("1. Statement one") belong to the
+    // current question, so a new question only starts once it is answered.
+    const questionMatch: RegExpMatchArray | null = !current || current.answer ? line.match(PATTERNS.question) : null;
 
-/* -------------------------------------------------------------------------- */
-/* ENTRY POINT                                                                */
-/* -------------------------------------------------------------------------- */
+    if (questionMatch) {
+      current = {
+        question: [questionMatch[1]!],
+        options: [],
+        explanation: [],
+        answer: null,
+        questionImages: [...block.images],
+        explanationImages: [],
+      };
 
-// Each question ends at its "Ans: (x)" line. Explanation lines that follow an
-// answer are attached to that question rather than the next one.
-export const parseQuestionsFromHtml = (
-  html: string,
-  images: DocImage[] = [],
-): ParsedQuestion[] => {
-  const tokens = tokenize(html);
+      drafts.push(current);
+      section = "question";
+      continue;
+    }
 
-  const results: ParsedQuestion[] = [];
-  let block: Token[] = [];
+    if (!current) {
+      continue;
+    }
 
-  const pending: {
-    stem: Token[];
-    options: Option[];
-    answer: string;
-    explanation: string[];
-    // Images found in the options or explanation, which have nowhere to go.
-    strayImages: number[];
-  }[] = [];
+    const answerMatch = line.match(PATTERNS.answer);
 
-  for (const token of tokens) {
-    if (token.kind === "text") {
-      const answer = token.text.match(ANSWER_PATTERN);
+    if (answerMatch) {
+      current.answer = normalizeOption(answerMatch[1]!);
+      current.explanationImages.push(...block.images);
+      // Lines after the answer are the explanation, labelled or not.
+      section = "explanation";
+      continue;
+    }
 
-      if (answer) {
-        const { options, stem } = extractOptions(block);
+    const explanationMatch = line.match(PATTERNS.explanation);
 
-        pending.push({
-          stem,
-          options,
-          answer: answer[1]!.toLowerCase(),
-          explanation: [],
-          strayImages: [...imagesOf(block.slice(stem.length)), ...token.images],
+    if (explanationMatch) {
+      current.explanation.push(explanationMatch[1]!);
+      current.explanationImages.push(...block.images);
+      section = "explanation";
+      continue;
+    }
+
+    if (section === "question" || section === "options") {
+      const optionMatch = line.match(PATTERNS.option);
+
+      if (optionMatch) {
+        const label = optionMatch[1] ?? optionMatch[2] ?? optionMatch[3];
+
+        // Statements ("1.", "(a)", "A.") followed by the real "(a)".."(d)"
+        // options were part of the question, so a restart moves them back.
+        const restarts =
+          current.options.length > 0 &&
+          (normalizeOption(label!) === "a" ||
+            (/[a-f]/i.test(label!) && current.options.some((option) => /^\d/.test(option.raw))));
+
+        if (restarts) {
+          current.question.push(...current.options.map((option) => option.raw));
+          current.questionImages.push(...current.options.flatMap((option) => option.images));
+          current.options = [];
+        }
+
+        current.options.push({
+          raw: line,
+          label: normalizeOption(label!),
+          text: [unwrapBoldPrefix(optionMatch[4]!.trim())],
+          images: [...block.images],
         });
-        block = [];
-        continue;
-      }
-
-      if (EXPLANATION_PATTERN.test(token.text) && block.length === 0 && pending.length) {
-        const entry = pending[pending.length - 1]!;
-
-        entry.explanation.push(
-          tidyEmphasis(token.markdown.replace(EXPLANATION_LABEL_PATTERN, "")),
-        );
-        entry.strayImages.push(...token.images);
+        section = "options";
         continue;
       }
     }
 
-    block.push(token);
+    // Multiline content continues whatever section came last.
+    if (section === "question") {
+      current.question.push(line);
+      current.questionImages.push(...block.images);
+    } else if (section === "options") {
+      current.options.at(-1)!.text.push(line);
+      current.options.at(-1)!.images.push(...block.images);
+    } else if (section === "explanation") {
+      current.explanation.push(line);
+      current.explanationImages.push(...block.images);
+    }
   }
 
-  pending.forEach((entry, i) => {
-    const preview = previewOf(entry.stem);
-    const index = i + 1;
-
-    if (!entry.options.length) {
-      results.push({ index, preview, error: "No options found before the answer" });
-      return;
-    }
-
-    if (!entry.options.some((option) => option.letter === entry.answer)) {
-      results.push({
-        index,
-        preview,
-        error: `Answer (${entry.answer}) does not match any option`,
-      });
-      return;
-    }
-
-    // A question stores a single image, so it has to sit in the question text.
-    if (entry.strayImages.length) {
-      results.push({
-        index,
-        preview,
-        error: "Images are only supported in the question text, not in options or explanations",
-      });
-      return;
-    }
-
-    const stemImages = imagesOf(entry.stem);
-
-    if (stemImages.length > 1) {
-      results.push({
-        index,
-        preview,
-        error: `Only one image per question is supported (found ${stemImages.length})`,
-      });
-      return;
-    }
-
-    const image = stemImages.length ? images[stemImages[0]!] : undefined;
-
-    if (image && !isSupportedImage(image.contentType, image.buffer.length)) {
-      results.push({
-        index,
-        preview,
-        error: `Image (${image.contentType}) must be a JPEG, PNG, WebP or GIF under 5MB`,
-      });
-      return;
-    }
-
-    const built = buildQuestion(
-      entry.stem,
-      entry.options,
-      entry.answer,
-      entry.explanation.join("\n\n") || undefined,
-    );
-
-    const parsed = createQuestionSchema.safeParse(built);
-
-    if (!parsed.success) {
-      results.push({
-        index,
-        preview,
-        error: parsed.error.issues
-          .map((issue) => `${issue.path.join(".") || "question"}: ${issue.message}`)
-          .join(", "),
-      });
-      return;
-    }
-
-    results.push({ index, preview, data: parsed.data, image });
-  });
-
-  const trailing = block.filter(
-    (token) => token.kind === "table" || token.text.trim(),
-  );
-
-  if (trailing.length) {
-    results.push({
-      index: pending.length + 1,
-      preview: previewOf(trailing),
-      error: 'Question has no "Ans:" line',
-    });
-  }
-
-  return results;
+  return drafts.map((draft, i) => validate(draft, i + 1, images));
 };
 
-export const parseQuestionsFromDocx = async (
-  buffer: Buffer,
-): Promise<ParsedQuestion[]> => {
+export const parseQuestionsFromDocx = async (buffer: Buffer): Promise<ParsedQuestion[]> => {
   const images: DocImage[] = [];
 
   // Images are collected instead of inlined as base64; the service saves the
   // ones that end up attached to a question.
   const { value: html } = await mammoth.convertToHtml(
-    { buffer },
+    { buffer: await replaceEquations(buffer) },
     {
       convertImage: mammoth.images.imgElement(async (image) => {
         images.push({

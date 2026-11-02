@@ -35,7 +35,14 @@ const formatQuiz = (quiz: any) => {
   };
 };
 
-const formatOption = (option: any) => option;
+const formatOption = (option: any) => {
+  const { imageKey, ...rest } = option;
+
+  return {
+    ...rest,
+    imageUrl: imageKey ? getUploadUrl(imageKey) : null,
+  };
+};
 
 // Shared so create, update and read all return the same quiz shape.
 const quizInclude = {
@@ -53,13 +60,26 @@ const quizInclude = {
   },
 };
 
+// Every stored image of a question: its own, the explanation's and the options'.
+const questionImageKeys = (question: {
+  imageKey: string | null;
+  explanationImageKey: string | null;
+  options: { imageKey: string | null }[];
+}) =>
+  [
+    question.imageKey,
+    question.explanationImageKey,
+    ...question.options.map((option) => option.imageKey),
+  ].filter((key): key is string => Boolean(key));
+
 // format
 function formatQuestion(question: any) {
-  const { imageKey, ...rest } = question;
+  const { imageKey, explanationImageKey, ...rest } = question;
 
   return {
     ...rest,
     imageUrl: imageKey ? getUploadUrl(imageKey) : null,
+    explanationImageUrl: explanationImageKey ? getUploadUrl(explanationImageKey) : null,
     ...(rest.options ? { options: rest.options.map(formatOption) } : {}),
   };
 }
@@ -258,13 +278,14 @@ export const deleteQuiz = async (id: string) => {
     },
     include: {
       questions: {
-        where: {
-          imageKey: {
-            not: null,
-          },
-        },
         select: {
           imageKey: true,
+          explanationImageKey: true,
+          options: {
+            select: {
+              imageKey: true,
+            },
+          },
         },
       },
     },
@@ -281,9 +302,7 @@ export const deleteQuiz = async (id: string) => {
   });
 
   // Questions cascade with the quiz, so their images go with it
-  await Promise.all(
-    quiz.questions.map((question) => removeUploadedFile(question.imageKey!)),
-  );
+  await Promise.all(quiz.questions.flatMap(questionImageKeys).map(removeUploadedFile));
 };
 
 export const getQuestions = async (
@@ -569,8 +588,8 @@ const applyQuestionUpdate = async (
   };
 };
 
-// All or nothing: a partially imported file is hard to fix and re-upload
-// without creating duplicates, so any unparseable question rejects the file.
+// Valid questions are imported and the rest are skipped and listed in the
+// result. The file is only rejected when none of its questions can be used.
 export const importQuestions = async (
   quizId: string,
   buffer: Buffer,
@@ -612,28 +631,62 @@ export const importQuestions = async (
     );
   }
 
-  const failed = parsed.filter((entry) => entry.error);
+  const total = parsed.length;
 
-  if (failed.length) {
+  // Questions with problems are skipped and reported back, so the rest of the
+  // file still imports.
+  const skipped = parsed
+    .filter((entry) => entry.error)
+    .map(({ index, preview, error }) => ({ index, preview, error: error! }));
+
+  parsed = parsed.filter((entry) => !entry.error);
+
+  if (!parsed.length) {
     throw new AppError(
       422,
-      `Could not import ${failed.length} question(s): ` +
-        failed
-          .map((entry) => `#${entry.index} "${entry.preview}" - ${entry.error}`)
-          .join("; "),
+      `None of the ${total} question(s) could be imported: ` +
+        skipped.map((entry) => `#${entry.index} "${entry.preview}" - ${entry.error}`).join("; "),
     );
   }
 
-  // Images are written only once the whole document is valid, and removed
+  // Images are written only once the questions are validated, and removed
   // again if the questions cannot be saved.
-  const imageKeys: (string | undefined)[] = [];
+  const savedKeys: string[] = [];
+  const removeSaved = () => Promise.all(savedKeys.map((key) => removeUploadedFile(key)));
+
+  const save = async (image?: { buffer: Buffer; contentType: string }) => {
+    if (!image) {
+      return undefined;
+    }
+
+    const key = await saveImageBuffer(image.buffer, image.contentType);
+    savedKeys.push(key);
+
+    return key;
+  };
+
+  const imageKeys: {
+    question?: string;
+    explanation?: string;
+    options: (string | undefined)[];
+  }[] = [];
 
   try {
-    for (const { image } of parsed) {
-      imageKeys.push(image ? await saveImageBuffer(image.buffer, image.contentType) : undefined);
+    for (const entry of parsed) {
+      const options: (string | undefined)[] = [];
+
+      for (const image of entry.optionImages ?? []) {
+        options.push(await save(image));
+      }
+
+      imageKeys.push({
+        question: await save(entry.image),
+        explanation: await save(entry.explanationImage),
+        options,
+      });
     }
   } catch (error) {
-    await Promise.all(imageKeys.map((key) => key && removeUploadedFile(key)));
+    await removeSaved();
     throw error;
   }
 
@@ -659,7 +712,8 @@ export const importQuestions = async (
     question: data!.question,
     explanation: data!.explanation,
     isActive: data!.isActive,
-    imageKey: imageKeys[index],
+    imageKey: imageKeys[index]!.question,
+    explanationImageKey: imageKeys[index]!.explanation,
     order: firstOrder + index,
     quizId,
   }));
@@ -669,6 +723,7 @@ export const importQuestions = async (
       questionId: rows[index]!.id,
       text: option.text,
       isCorrect: option.isCorrect,
+      imageKey: imageKeys[index]!.options[optionIndex],
       order: optionIndex + 1,
     })),
   );
@@ -679,7 +734,7 @@ export const importQuestions = async (
       prisma.questionOption.createMany({ data: options }),
     ]);
   } catch (error) {
-    await Promise.all(imageKeys.map((key) => key && removeUploadedFile(key)));
+    await removeSaved();
     throw error;
   }
 
@@ -703,6 +758,8 @@ export const importQuestions = async (
 
   return {
     imported: questions.length,
+    total,
+    skipped,
     questions: questions.map(formatQuestion),
   };
 };
@@ -716,6 +773,12 @@ export const deleteQuestion = async (quizId: string, questionId: string) => {
     select: {
       id: true,
       imageKey: true,
+      explanationImageKey: true,
+      options: {
+        select: {
+          imageKey: true,
+        },
+      },
     },
   });
 
@@ -729,7 +792,5 @@ export const deleteQuestion = async (quizId: string, questionId: string) => {
     },
   });
 
-  if (question.imageKey) {
-    await removeUploadedFile(question.imageKey);
-  }
+  await Promise.all(questionImageKeys(question).map(removeUploadedFile));
 };
