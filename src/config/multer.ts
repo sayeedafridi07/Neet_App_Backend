@@ -1,9 +1,11 @@
 import path from "node:path";
 import fs from "node:fs";
 import crypto from "node:crypto";
+import os from "node:os";
 import multer from "multer";
 import type { Request, Response, NextFunction } from "express";
 import { AppError } from "../utils/app-error.js";
+import { deleteFile, getPublicUrl, uploadFile } from "./r2.js";
 
 export const AUDIO_UPLOAD_DIR = "audio";
 export const AUDIO_FIELD_NAME = "audio";
@@ -27,12 +29,11 @@ export const AUDIO_MIME_TYPES = [
 
 const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100MB
 
-export const getUploadRoot = () => {
-  return path.resolve(process.cwd(), "uploads");
-};
-
-export const getAudioUploadDir = () => {
-  return path.join(getUploadRoot(), AUDIO_UPLOAD_DIR);
+// Multer writes to a local scratch dir first (ffprobe needs a real file for
+// audio duration). Files are pushed to R2 right after multer finishes and the
+// scratch copies are removed once the response is done.
+const getTempRoot = () => {
+  return path.join(os.tmpdir(), "neet-uploads");
 };
 
 const resolveExtension = (file: Express.Multer.File) => {
@@ -58,11 +59,12 @@ const resolveExtension = (file: Express.Multer.File) => {
   return fromMime[file.mimetype] ?? ".mp3";
 };
 
-const sanitizeFilename = (filename: string) => {
-  const extension = path.extname(filename).toLowerCase();
+const sanitizeFilename = (file: Express.Multer.File) => {
+  const filename = file.originalname;
+  const extension = resolveExtension(file);
 
   const name = path
-    .basename(filename, extension)
+    .basename(filename, path.extname(filename))
     .trim()
     .replace(/[^a-zA-Z0-9-_]+/g, "-")
     .replace(/-+/g, "-")
@@ -108,7 +110,7 @@ export const isSupportedImage = (contentType: string, size: number) =>
   Boolean(IMAGE_MIME_TYPES[contentType]) && size <= MAX_IMAGE_SIZE;
 
 // Images extracted from documents never pass through multer, so they are
-// written here with the same naming rules and return the same kind of key.
+// uploaded here with the same naming rules and return the same kind of key.
 export const saveImageBuffer = async (buffer: Buffer, contentType: string) => {
   const extension = IMAGE_MIME_TYPES[contentType];
 
@@ -116,24 +118,25 @@ export const saveImageBuffer = async (buffer: Buffer, contentType: string) => {
     throw new AppError(415, `Unsupported image type: ${contentType}`);
   }
 
-  const dir = path.join(getUploadRoot(), IMAGE_UPLOAD_DIR);
-  const filename = `${crypto.randomBytes(16).toString("hex")}${extension}`;
+  const key = path.posix.join(
+    IMAGE_UPLOAD_DIR,
+    `${crypto.randomBytes(16).toString("hex")}${extension}`,
+  );
 
-  await fs.promises.mkdir(dir, { recursive: true });
-  await fs.promises.writeFile(path.join(dir, filename), buffer);
+  await uploadFile(buffer, key, contentType);
 
-  return path.posix.join(IMAGE_UPLOAD_DIR, filename);
+  return key;
 };
 
 export const getUploadUrl = (key: string) => {
-  return `${process.env.BASE_URL}/uploads/${key}`;
+  return getPublicUrl(key);
 };
 
 // Audio and images share one storage so a request can carry both.
 const storage = multer.diskStorage({
   destination: (_req, file, cb) => {
     const dir = path.join(
-      getUploadRoot(),
+      getTempRoot(),
       isImageField(file.fieldname) ? IMAGE_UPLOAD_DIR : AUDIO_UPLOAD_DIR,
     );
 
@@ -155,7 +158,7 @@ const storage = multer.diskStorage({
       );
     }
 
-    cb(null, sanitizeFilename(file.originalname));
+    cb(null, sanitizeFilename(file));
   },
 });
 
@@ -265,6 +268,50 @@ const toUploadError = (
   return error;
 };
 
+const getFileKey = (file: Express.Multer.File) =>
+  isImageField(file.fieldname) ? getImageKey(file) : getAudioKey(file);
+
+const removeTempFiles = (req: Request) => {
+  for (const file of getUploadedFiles(req)) {
+    fs.promises.unlink(file.path).catch(() => {});
+  }
+};
+
+// Pushes every file multer accepted to R2 under images/ or audio/. Temp files
+// stay until the response closes so services can still read file.path.
+const storeUploadedFiles = async (req: Request, res: Response) => {
+  res.once("close", () => removeTempFiles(req));
+
+  const files = getUploadedFiles(req);
+  const results = await Promise.allSettled(
+    files.map((file) => uploadFile(file.path, getFileKey(file), file.mimetype)),
+  );
+
+  if (results.some((result) => result.status === "rejected")) {
+    await discardUploadedFiles(req);
+
+    const failure = results.find(
+      (result): result is PromiseRejectedResult => result.status === "rejected",
+    );
+    console.error("❌ R2 upload failed:", failure?.reason);
+
+    throw new AppError(502, "Failed to store uploaded file");
+  }
+};
+
+const finishUpload = async (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) => {
+  try {
+    await storeUploadedFiles(req, res);
+    next();
+  } catch (error) {
+    next(error);
+  }
+};
+
 export const handleAudioUpload = (
   req: Request,
   res: Response,
@@ -297,7 +344,7 @@ export const handleAudioUpload = (
       );
     }
 
-    next();
+    await finishUpload(req, res, next);
   });
 };
 
@@ -306,14 +353,16 @@ export const handleImageUpload = (
   res: Response,
   next: NextFunction,
 ) => {
-  uploadImage(req, res, (error: unknown) => {
+  uploadImage(req, res, async (error: unknown) => {
     if (error) {
+      removeTempFiles(req);
+
       return next(
         toUploadError(error, MAX_IMAGE_SIZE, `"${IMAGE_FIELD_NAME}"`),
       );
     }
 
-    next();
+    await finishUpload(req, res, next);
   });
 };
 
@@ -335,40 +384,34 @@ export const handleQuestionImageUpload = (
       );
     }
 
-    next();
+    await finishUpload(req, res, next);
   });
 };
 
 export const removeUploadedFile = async (key: string) => {
-  const uploadRoot = getUploadRoot();
-  const filePath = path.resolve(uploadRoot, key);
-
-  if (!filePath.startsWith(uploadRoot + path.sep)) {
-    console.warn(`⚠️ Refusing to delete outside upload root: ${key}`);
+  // Only ever touch the two managed folders.
+  if (
+    !key.startsWith(`${IMAGE_UPLOAD_DIR}/`) &&
+    !key.startsWith(`${AUDIO_UPLOAD_DIR}/`)
+  ) {
+    console.warn(`⚠️ Refusing to delete unmanaged key: ${key}`);
     return;
   }
 
   try {
-    await fs.promises.unlink(filePath);
+    await deleteFile(key);
   } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-
-    if (code !== "ENOENT") {
-      console.warn(`⚠️ Failed to delete ${key}:`, error);
-    }
+    console.warn(`⚠️ Failed to delete ${key}:`, error);
   }
 };
 
+// Removes the request's files from R2 (a no-op for ones never uploaded, since
+// R2 deletes are idempotent) and drops the local temp copies.
 export const discardUploadedFiles = async (req: Request) => {
   await Promise.all(
-    getUploadedFiles(req).map((file) =>
-      removeUploadedFile(
-        isImageField(file.fieldname)
-          ? getImageKey(file)
-          : getAudioKey(file),
-      ),
-    ),
+    getUploadedFiles(req).map((file) => removeUploadedFile(getFileKey(file))),
   );
+  removeTempFiles(req);
 };
 
 /* -------------------------------------------------------------------------- */
