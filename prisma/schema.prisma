@@ -31,6 +31,24 @@ model User {
   quizAttempts  QuizAttempt[]
   subscriptions Subscription[]
   payments      Payment[]
+  dailyActivity UserDailyActivity[]
+
+  @@index([createdAt])
+  @@index([lastActiveAt])
+}
+
+// One row per user per calendar day (IST) the user made an authenticated request.
+// Powers DAU/WAU/MAU and activity trends.
+model UserDailyActivity {
+  id     String   @id @default(uuid())
+  userId String
+  user   User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  date   DateTime @db.Date
+
+  createdAt DateTime @default(now())
+
+  @@unique([userId, date])
+  @@index([date])
 }
 
 model Admin {

@@ -1,4 +1,5 @@
 import prisma from "../../config/prisma.js";
+import { trackUserActivity } from "../../utils/activity.js";
 import { AppError } from "../../utils/app-error.js";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
@@ -135,6 +136,8 @@ export const verifyOtp = async (
       },
     });
   }
+
+  trackUserActivity(user.id);
 
   const token = jwt.sign(
     {

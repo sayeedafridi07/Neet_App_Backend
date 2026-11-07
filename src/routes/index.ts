@@ -10,6 +10,7 @@ import audioLectureRoutes from "../modules/audio-lecture/audio-lecture.route.js"
 import keywordRevisionRoutes from "../modules/keyword-revision/keyword-revision.route.js";
 import quizRoutes from "../modules/quiz/quiz.route.js";
 import subscriptionRoutes from "../modules/subscription/subscription.routes.js";
+import dashboardRoutes from "../modules/dashboard/dashboard.route.js";
 
 const router = Router();
 
@@ -23,5 +24,6 @@ router.use("/audio-lectures", audioLectureRoutes);
 router.use("/keyword-revisions", keywordRevisionRoutes);
 router.use("/quizzes", quizRoutes);
 router.use("/subscriptions", subscriptionRoutes);
+router.use("/dashboard", dashboardRoutes);
 
 export default router;

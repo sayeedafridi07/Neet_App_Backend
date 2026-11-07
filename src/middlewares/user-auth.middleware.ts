@@ -3,6 +3,7 @@ import jwt from "jsonwebtoken";
 
 import prisma from "../config/prisma.js";
 import { AppError } from "../utils/app-error.js";
+import { trackUserActivity } from "../utils/activity.js";
 
 interface UserAuthPayload {
   userId: string;
@@ -60,6 +61,8 @@ export const userAuthMiddleware = async (
     }
 
     req.user = user;
+
+    trackUserActivity(user.id);
 
     next();
   } catch (error) {
