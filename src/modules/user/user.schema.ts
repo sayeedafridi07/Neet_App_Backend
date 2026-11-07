@@ -20,6 +20,11 @@ export const createUserSchema = z.object({
 
 export const updateUserSchema = z
   .object({
+    phone: z
+      .string()
+      .regex(/^[6-9]\d{9}$/, "Enter a valid mobile number")
+      .optional(),
+
     name: z
       .string()
       .trim()

@@ -121,6 +121,18 @@ export const updateUser = async (id: string, data: UpdateUserData) => {
     throw new AppError(404, "User not found");
   }
 
+  if (data.phone && data.phone !== user.phone) {
+    const phoneTaken = await prisma.user.findUnique({
+      where: {
+        phone: data.phone,
+      },
+    });
+
+    if (phoneTaken) {
+      throw new AppError(409, "Phone number already in use");
+    }
+  }
+
   return prisma.user.update({
     where: {
       id,
