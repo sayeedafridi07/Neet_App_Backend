@@ -295,13 +295,26 @@ export const deleteQuiz = async (id: string) => {
     throw new AppError(404, "Quiz not found");
   }
 
-  await prisma.quiz.delete({
-    where: {
-      id,
-    },
-  });
+  await prisma.$transaction([
+    prisma.questionOption.deleteMany({
+      where: {
+        question: {
+          quizId: id,
+        },
+      },
+    }),
+    prisma.question.deleteMany({
+      where: {
+        quizId: id,
+      },
+    }),
+    prisma.quiz.delete({
+      where: {
+        id,
+      },
+    }),
+  ]);
 
-  // Questions cascade with the quiz, so their images go with it
   await Promise.all(quiz.questions.flatMap(questionImageKeys).map(removeUploadedFile));
 };
 
@@ -397,19 +410,71 @@ export const getQuestionById = async (quizId: string, questionId: string) => {
   return formatQuestion(question);
 };
 
+export type QuestionImages = {
+  image?: Express.Multer.File;
+  explanationImage?: Express.Multer.File;
+  // Indexed like the options they belong to
+  optionImages: (Express.Multer.File | undefined)[];
+};
+
+type QuestionImageKeys = {
+  image?: string;
+  explanationImage?: string;
+  optionImages: (string | undefined)[];
+};
+
+const getQuestionImageKeys = (images: QuestionImages): QuestionImageKeys => ({
+  image: images.image ? getImageKey(images.image) : undefined,
+  explanationImage: images.explanationImage
+    ? getImageKey(images.explanationImage)
+    : undefined,
+  optionImages: images.optionImages.map((file) =>
+    file ? getImageKey(file) : undefined,
+  ),
+});
+
+const allImageKeys = (keys: QuestionImageKeys) =>
+  [keys.image, keys.explanationImage, ...keys.optionImages].filter(
+    (key): key is string => Boolean(key),
+  );
+
+const assertOptionImagesFit = (
+  optionImages: (string | undefined)[],
+  optionCount: number,
+) => {
+  const index = optionImages.findIndex(
+    (key, position) => key && position >= optionCount,
+  );
+
+  if (index !== -1) {
+    throw new AppError(
+      400,
+      `Image uploaded for option ${index + 1}, but the question has only ${optionCount} options`,
+    );
+  }
+};
+
+const assertOptionsHaveContent = (
+  options: { text: string; imageKey?: string | null }[],
+) => {
+  const index = options.findIndex((option) => !option.text && !option.imageKey);
+
+  if (index !== -1) {
+    throw new AppError(400, `Option ${index + 1} needs text or an image`);
+  }
+};
+
 export const createQuestion = async (
   quizId: string,
   data: CreateQuestionData,
-  image?: Express.Multer.File,
+  images: QuestionImages,
 ) => {
-  const imageKey = image ? getImageKey(image) : undefined;
+  const imageKeys = getQuestionImageKeys(images);
 
   try {
-    return await insertQuestion(quizId, data, imageKey);
+    return await insertQuestion(quizId, data, imageKeys);
   } catch (error) {
-    if (imageKey) {
-      await removeUploadedFile(imageKey);
-    }
+    await Promise.all(allImageKeys(imageKeys).map(removeUploadedFile));
 
     throw error;
   }
@@ -418,8 +483,17 @@ export const createQuestion = async (
 const insertQuestion = async (
   quizId: string,
   data: CreateQuestionData,
-  imageKey?: string,
+  imageKeys: QuestionImageKeys,
 ) => {
+  assertOptionImagesFit(imageKeys.optionImages, data.options.length);
+
+  assertOptionsHaveContent(
+    data.options.map((option, index) => ({
+      text: option.text,
+      imageKey: imageKeys.optionImages[index],
+    })),
+  );
+
   const quiz = await prisma.quiz.findUnique({
     where: {
       id: quizId,
@@ -439,7 +513,8 @@ const insertQuestion = async (
     data: {
       question: data.question,
       explanation: data.explanation,
-      imageKey,
+      imageKey: imageKeys.image,
+      explanationImageKey: imageKeys.explanationImage,
       isActive: data.isActive,
       order,
       quizId,
@@ -448,6 +523,7 @@ const insertQuestion = async (
         create: data.options.map((option, index) => ({
           text: option.text,
           isCorrect: option.isCorrect,
+          imageKey: imageKeys.optionImages[index],
           order: index + 1,
         })),
       },
@@ -469,13 +545,14 @@ export const updateQuestion = async (
   quizId: string,
   questionId: string,
   data: UpdateQuestionData,
-  image?: Express.Multer.File,
+  images: QuestionImages,
 ) => {
-  if (!image && Object.keys(data).length === 0) {
+  const imageKeys = getQuestionImageKeys(images);
+  const uploadedKeys = allImageKeys(imageKeys);
+
+  if (uploadedKeys.length === 0 && Object.keys(data).length === 0) {
     throw new AppError(400, "At least one field is required");
   }
-
-  const newImageKey = image ? getImageKey(image) : undefined;
 
   let previous;
   let updated;
@@ -485,20 +562,22 @@ export const updateQuestion = async (
       quizId,
       questionId,
       data,
-      newImageKey,
+      imageKeys,
     ));
   } catch (error) {
-    if (newImageKey) {
-      await removeUploadedFile(newImageKey);
-    }
+    await Promise.all(uploadedKeys.map(removeUploadedFile));
 
     throw error;
   }
 
-  // Delete the old image only after the DB update succeeds
-  if (previous.imageKey && previous.imageKey !== updated.imageKey) {
-    await removeUploadedFile(previous.imageKey);
-  }
+  // Delete replaced or removed images only after the DB update succeeds
+  const kept = new Set(questionImageKeys(updated));
+
+  await Promise.all(
+    questionImageKeys(previous)
+      .filter((key) => !kept.has(key))
+      .map(removeUploadedFile),
+  );
 
   return formatQuestion(updated);
 };
@@ -507,7 +586,7 @@ const applyQuestionUpdate = async (
   quizId: string,
   questionId: string,
   data: UpdateQuestionData,
-  newImageKey?: string,
+  imageKeys: QuestionImageKeys,
 ) => {
   const question = await prisma.question.findFirst({
     where: {
@@ -527,24 +606,37 @@ const applyQuestionUpdate = async (
     throw new AppError(404, "Question not found");
   }
 
-  const { options, removeImage, ...fields } = data;
+  const { options, removeImage, removeExplanationImage, ...fields } = data;
 
-  const imageKey = newImageKey ?? (removeImage ? null : undefined);
+  const imageKey = imageKeys.image ?? (removeImage ? null : undefined);
+
+  const explanationImageKey =
+    imageKeys.explanationImage ?? (removeExplanationImage ? null : undefined);
+
+  // Option images can be uploaded without resending the options, in which
+  // case they apply to the current options by index.
+  const nextOptions = (options ?? question.options).map((option, index) => ({
+    text: option.text,
+    isCorrect: option.isCorrect,
+    imageKey:
+      imageKeys.optionImages[index] ??
+      (options?.[index]?.removeImage
+        ? null
+        : (question.options[index]?.imageKey ?? null)),
+  }));
+
+  assertOptionImagesFit(imageKeys.optionImages, nextOptions.length);
+  assertOptionsHaveContent(nextOptions);
 
   const optionsChanged =
-    options !== undefined &&
+    JSON.stringify(nextOptions) !==
     JSON.stringify(
-      options.map((option) => ({
+      question.options.map((option) => ({
         text: option.text,
         isCorrect: option.isCorrect,
+        imageKey: option.imageKey,
       })),
-    ) !==
-      JSON.stringify(
-        question.options.map((option) => ({
-          text: option.text,
-          isCorrect: option.isCorrect,
-        })),
-      );
+    );
 
   const updated = await prisma.$transaction(async (tx) => {
     if (optionsChanged) {
@@ -555,9 +647,8 @@ const applyQuestionUpdate = async (
       });
 
       await tx.questionOption.createMany({
-        data: options.map((option, index) => ({
-          text: option.text,
-          isCorrect: option.isCorrect,
+        data: nextOptions.map((option, index) => ({
+          ...option,
           order: index + 1,
           questionId,
         })),
@@ -571,6 +662,7 @@ const applyQuestionUpdate = async (
       data: {
         ...fields,
         imageKey,
+        explanationImageKey,
       },
       include: {
         options: {
@@ -786,11 +878,18 @@ export const deleteQuestion = async (quizId: string, questionId: string) => {
     throw new AppError(404, "Question not found");
   }
 
-  await prisma.question.delete({
-    where: {
-      id: questionId,
-    },
-  });
+  await prisma.$transaction([
+    prisma.questionOption.deleteMany({
+      where: {
+        questionId,
+      },
+    }),
+    prisma.question.delete({
+      where: {
+        id: questionId,
+      },
+    }),
+  ]);
 
   await Promise.all(questionImageKeys(question).map(removeUploadedFile));
 };

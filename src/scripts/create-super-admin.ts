@@ -40,4 +40,4 @@ const createSuperAdmin = async () => {
 createSuperAdmin();
 
 // To run this script, you can use the following command in your terminal:
-// npx ts-node src/scripts/create-super-admin.ts
+// npx tsx src/scripts/create-super-admin.ts

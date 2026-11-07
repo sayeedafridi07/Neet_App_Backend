@@ -179,7 +179,7 @@ model Question {
   id String @id @default(uuid())
 
   quizId String
-  quiz   Quiz @relation(fields: [quizId], references: [id], onDelete: Cascade)
+  quiz   Quiz @relation(fields: [quizId], references: [id])
 
   question    String
   explanation String?
@@ -204,7 +204,7 @@ model QuestionOption {
   id String @id @default(uuid())
 
   questionId String
-  question   Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  question   Question @relation(fields: [questionId], references: [id])
 
   text      String
   isCorrect Boolean @default(false)
@@ -299,7 +299,6 @@ model QuizAttemptAnswer {
 model SubscriptionPlan {
   id          String  @id @default(uuid())
   name        String
-  slug        String  @unique
   description String?
 
   // Amounts stored in the smallest currency unit (paise)
@@ -344,6 +343,7 @@ model Subscription {
   startsAt    DateTime?
   expiresAt   DateTime?
   cancelledAt DateTime?
+  cancelAtPeriodEnd Boolean @default(false)
 
   // Snapshot of the plan at purchase time.
   // This protects historical subscriptions from later admin edits.
@@ -362,6 +362,7 @@ model Subscription {
 
 enum PaymentStatus {
   CREATED
+  AUTHORIZED
   SUCCESS
   FAILED
   REFUNDED

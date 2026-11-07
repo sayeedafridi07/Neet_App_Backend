@@ -5,9 +5,20 @@ import { AppError } from "../../utils/app-error.js";
 import { getDocumentKind } from "../../config/multer.js";
 import { getQuizzesSchema, getQuestionsSchema } from "./quiz.schema.js";
 import {
+  EXPLANATION_IMAGE_FIELD_NAME,
   IMAGE_FIELD_NAME,
+  MAX_QUESTION_OPTIONS,
+  getOptionImageFieldName,
   getUploadedFile,
 } from "../../config/multer.js";
+
+const getQuestionImages = (req: Request): quizService.QuestionImages => ({
+  image: getUploadedFile(req, IMAGE_FIELD_NAME),
+  explanationImage: getUploadedFile(req, EXPLANATION_IMAGE_FIELD_NAME),
+  optionImages: Array.from({ length: MAX_QUESTION_OPTIONS }, (_, index) =>
+    getUploadedFile(req, getOptionImageFieldName(index)),
+  ),
+});
 
 export const getQuizzes = async (
   req: Request,
@@ -157,7 +168,7 @@ export const createQuestion = async (
     const question = await quizService.createQuestion(
       req.params.quizId,
       req.body,
-      getUploadedFile(req, IMAGE_FIELD_NAME),
+      getQuestionImages(req),
     );
 
     return sendResponse(
@@ -212,7 +223,7 @@ export const updateQuestion = async (
       req.params.quizId,
       req.params.questionId,
       req.body,
-      getUploadedFile(req, IMAGE_FIELD_NAME),
+      getQuestionImages(req),
     );
 
     return sendResponse(

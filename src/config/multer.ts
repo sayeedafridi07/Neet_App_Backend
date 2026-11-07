@@ -3,7 +3,6 @@ import fs from "node:fs";
 import crypto from "node:crypto";
 import multer from "multer";
 import type { Request, Response, NextFunction } from "express";
-
 import { AppError } from "../utils/app-error.js";
 
 export const AUDIO_UPLOAD_DIR = "audio";
@@ -75,6 +74,23 @@ const sanitizeFilename = (filename: string) => {
 export const IMAGE_UPLOAD_DIR = "images";
 export const IMAGE_FIELD_NAME = "image";
 
+// Quiz questions also carry an explanation image and one image per option,
+// sent as optionImage0..optionImage5 to match the index in `options`.
+export const EXPLANATION_IMAGE_FIELD_NAME = "explanationImage";
+export const MAX_QUESTION_OPTIONS = 6;
+export const getOptionImageFieldName = (index: number) => `optionImage${index}`;
+
+const QUESTION_IMAGE_FIELD_NAMES = [
+  IMAGE_FIELD_NAME,
+  EXPLANATION_IMAGE_FIELD_NAME,
+  ...Array.from({ length: MAX_QUESTION_OPTIONS }, (_, index) =>
+    getOptionImageFieldName(index),
+  ),
+];
+
+const isImageField = (fieldname: string) =>
+  QUESTION_IMAGE_FIELD_NAMES.includes(fieldname);
+
 const IMAGE_MIME_TYPES: Record<string, string> = {
   "image/jpeg": ".jpg",
   "image/png": ".png",
@@ -118,7 +134,7 @@ const storage = multer.diskStorage({
   destination: (_req, file, cb) => {
     const dir = path.join(
       getUploadRoot(),
-      file.fieldname === IMAGE_FIELD_NAME ? IMAGE_UPLOAD_DIR : AUDIO_UPLOAD_DIR,
+      isImageField(file.fieldname) ? IMAGE_UPLOAD_DIR : AUDIO_UPLOAD_DIR,
     );
 
     fs.mkdir(dir, { recursive: true }, (error) => {
@@ -131,7 +147,7 @@ const storage = multer.diskStorage({
   },
 
   filename: (_req, file, cb) => {
-    if (file.fieldname === IMAGE_FIELD_NAME) {
+    if (isImageField(file.fieldname)) {
       // The extension comes from the validated mime type, never the client name.
       return cb(
         null,
@@ -148,7 +164,7 @@ const fileFilter = (
   file: Express.Multer.File,
   cb: multer.FileFilterCallback,
 ) => {
-  if (file.fieldname === IMAGE_FIELD_NAME) {
+  if (isImageField(file.fieldname)) {
     if (!IMAGE_MIME_TYPES[file.mimetype]) {
       return cb(
         new AppError(
@@ -194,6 +210,15 @@ export const uploadImage = multer({
     files: 1,
   },
 }).single(IMAGE_FIELD_NAME);
+
+export const uploadQuestionImages = multer({
+  storage,
+  fileFilter,
+  limits: {
+    fileSize: MAX_IMAGE_SIZE,
+    files: QUESTION_IMAGE_FIELD_NAMES.length,
+  },
+}).fields(QUESTION_IMAGE_FIELD_NAMES.map((name) => ({ name, maxCount: 1 })));
 
 export const getUploadedFile = (req: Request, field: string) => {
   if (req.file?.fieldname === field) {
@@ -292,6 +317,28 @@ export const handleImageUpload = (
   });
 };
 
+export const handleQuestionImageUpload = (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) => {
+  uploadQuestionImages(req, res, async (error: unknown) => {
+    if (error) {
+      await discardUploadedFiles(req);
+
+      return next(
+        toUploadError(
+          error,
+          MAX_IMAGE_SIZE,
+          QUESTION_IMAGE_FIELD_NAMES.map((name) => `"${name}"`).join(", "),
+        ),
+      );
+    }
+
+    next();
+  });
+};
+
 export const removeUploadedFile = async (key: string) => {
   const uploadRoot = getUploadRoot();
   const filePath = path.resolve(uploadRoot, key);
@@ -316,7 +363,7 @@ export const discardUploadedFiles = async (req: Request) => {
   await Promise.all(
     getUploadedFiles(req).map((file) =>
       removeUploadedFile(
-        file.fieldname === IMAGE_FIELD_NAME
+        isImageField(file.fieldname)
           ? getImageKey(file)
           : getAudioKey(file),
       ),

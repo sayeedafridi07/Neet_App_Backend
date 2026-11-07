@@ -7,10 +7,7 @@ import { formBoolean, formJson } from "../../utils/form.js";
 // would silently overwrite the marking scheme, so normalise them away first.
 const optionalMarks = z.preprocess(
   (value) => (value === null || value === "" ? undefined : value),
-  z.coerce
-    .number()
-    .finite("Marks must be a finite number")
-    .optional(),
+  z.coerce.number().finite("Marks must be a finite number").optional(),
 );
 
 // Unlike the marking scheme, an explicit null here is meaningful: it detaches
@@ -110,42 +107,11 @@ export const createQuestionSchema = z.object({
 
   options: formJson(
     z
-    .array(
-      z.object({
-        text: z.string().trim().min(1, "Option text is required"),
-
-        isCorrect: z.boolean(),
-      }),
-    )
-    .min(2, "A question must have at least two options")
-    .max(6, "A question cannot have more than six options")
-    .refine(
-      (options) =>
-        options.filter((option) => option.isCorrect).length === 1,
-      {
-        message: "A question must have exactly one correct option",
-      },
-    ),
-  ),
-});
-
-// Emptiness is checked in the service, since an upload alone is a valid update
-export const updateQuestionSchema = z
-  .object({
-    question: z.string().trim().min(1, "Question is required").optional(),
-
-    explanation: z.string().trim().nullable().optional(),
-
-    isActive: formBoolean.optional(),
-
-    // Clears the current image when no new one is uploaded
-    removeImage: formBoolean.optional(),
-
-    options: formJson(
-      z
       .array(
         z.object({
-          text: z.string().trim().min(1, "Option text is required"),
+          // May be empty when the option has an image; the service checks
+          // that every option has one or the other
+          text: z.string().trim().default(""),
 
           isCorrect: z.boolean(),
         }),
@@ -153,14 +119,53 @@ export const updateQuestionSchema = z
       .min(2, "A question must have at least two options")
       .max(6, "A question cannot have more than six options")
       .refine(
-        (options) =>
-          options.filter((option) => option.isCorrect).length === 1,
+        (options) => options.filter((option) => option.isCorrect).length === 1,
         {
           message: "A question must have exactly one correct option",
         },
       ),
-    ).optional(),
-  });
+  ),
+});
+
+// Emptiness is checked in the service, since an upload alone is a valid update
+export const updateQuestionSchema = z.object({
+  question: z.string().trim().min(1, "Question is required").optional(),
+
+  explanation: z.string().trim().nullable().optional(),
+
+  isActive: formBoolean.optional(),
+
+  // Clears the current image when no new one is uploaded
+  removeImage: formBoolean.optional(),
+
+  // Clears the current explanation image when no new one is uploaded
+  removeExplanationImage: formBoolean.optional(),
+
+  options: formJson(
+    z
+      .array(
+        z.object({
+          // May be empty when the option has an image; the service checks
+          // that every option has one or the other
+          text: z.string().trim().default(""),
+
+          isCorrect: z.boolean(),
+
+          // An option keeps the image of the option at the same index unless
+          // a new one is uploaded or this is set
+          removeImage: z.boolean().optional(),
+        }),
+      )
+      .min(2, "A question must have at least two options")
+      .max(6, "A question cannot have more than six options")
+      .refine(
+        (options) => options.filter((option) => option.isCorrect).length === 1,
+        {
+          message: "A question must have exactly one correct option",
+        },
+      ),
+  ).optional(),
+});
 
 export const getQuestionsSchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
