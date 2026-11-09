@@ -9,8 +9,7 @@ import {
   deleteChapter,
 } from "./chapter.controller.js";
 
-import { AdminRole } from "../../generated/prisma/enums.js";
-import { adminAuthMiddleware } from "../../middlewares/admin-auth.middleware.js";
+import { authMiddleware } from "../../middlewares/auth.middleware.js";
 import { allowRoles } from "../../middlewares/allow-role.middleware.js";
 import { validate } from "../../middlewares/validate.middleware.js";
 import { createChapterSchema, updateChapterSchema } from "./chapter.schema.js";
@@ -18,8 +17,8 @@ import { createChapterSchema, updateChapterSchema } from "./chapter.schema.js";
 const router = Router();
 
 router.use(
-  adminAuthMiddleware,
-  allowRoles(AdminRole.SUPER_ADMIN, AdminRole.ADMIN),
+  authMiddleware,
+  allowRoles("ADMIN", "SUPER_ADMIN"),
 );
 
 router.get("/", getChapters);
@@ -27,6 +26,6 @@ router.get("/:id", getChapterById);
 router.get("/slug/:slug", getChapterBySlug);
 router.post("/", validate(createChapterSchema), createChapter);
 router.patch("/:id", validate(updateChapterSchema), updateChapter);
-router.delete("/:id", allowRoles(AdminRole.SUPER_ADMIN), deleteChapter);
+router.delete("/:id", allowRoles("SUPER_ADMIN"), deleteChapter);
 
 export default router;

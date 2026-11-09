@@ -1,12 +1,15 @@
 import type { NextFunction, Request, Response } from "express";
 import { AppError } from "../utils/app-error.js";
+import type { AuthType } from "./auth.middleware.js";
 
-export const allowRoles = (...allowedRoles: string[]) => {
+export const allowRoles = (...allowedRoles: AuthType[]) => {
   return (req: Request, _res: Response, next: NextFunction) => {
-    const userRole = req.user.role;
+    if (!req.auth) {
+      return next(new AppError(401, "Authentication required"));
+    }
 
-    if (!allowedRoles.includes(userRole)) {
-      throw new AppError(403, "Access denied");
+    if (!allowedRoles.includes(req.auth.type)) {
+      return next(new AppError(403, "Access denied"));
     }
 
     next();
