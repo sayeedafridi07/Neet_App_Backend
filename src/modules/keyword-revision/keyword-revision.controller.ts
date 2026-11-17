@@ -1,7 +1,10 @@
 import type { Request, Response, NextFunction } from "express";
 import * as keywordRevisionService from "./keyword-revision.service.js";
 import { sendResponse } from "../../utils/response.js";
-import { getKeywordRevisionsSchema } from "./keyword-revision.schema.js";
+import {
+  getKeywordRevisionsSchema,
+  getStudentKeywordRevisionsSchema,
+} from "./keyword-revision.schema.js";
 import {
   AUDIO_FIELD_NAME,
   IMAGE_FIELD_NAME,
@@ -15,7 +18,7 @@ export const getKeywordRevisions = async (
   next: NextFunction,
 ) => {
   try {
-    const { page, limit, search, chapterId, isActive } =
+    const { page, limit, search, chapterId, classId, subjectId, isActive } =
       getKeywordRevisionsSchema.parse(req.query);
 
     const result = await keywordRevisionService.getKeywordRevisions(
@@ -23,6 +26,8 @@ export const getKeywordRevisions = async (
       limit,
       search,
       chapterId,
+      classId,
+      subjectId,
       isActive,
     );
 
@@ -139,6 +144,33 @@ export const deleteKeywordRevision = async (
     await keywordRevisionService.deleteKeywordRevision(req.params.id);
 
     return sendResponse(res, 200, true, "Keyword revision deleted successfully");
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const getStudentKeywordRevisions = async (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) => {
+  try {
+    const { classId, subjectId } = getStudentKeywordRevisionsSchema.parse(
+      req.query,
+    );
+
+    const chapters = await keywordRevisionService.getStudentKeywordRevisions(
+      classId,
+      subjectId,
+    );
+
+    return sendResponse(
+      res,
+      200,
+      true,
+      "Keyword revisions retrieved successfully",
+      chapters,
+    );
   } catch (error) {
     next(error);
   }

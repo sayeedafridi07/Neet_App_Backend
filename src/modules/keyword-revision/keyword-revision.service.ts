@@ -37,12 +37,22 @@ export const getKeywordRevisions = async (
   limit: number,
   search?: string,
   chapterId?: string,
+  classId?: string,
+  subjectId?: string,
   isActive?: boolean,
 ) => {
   const skip = (page - 1) * limit;
 
   const where = {
     ...(chapterId ? { chapterId } : {}),
+    ...(classId || subjectId
+      ? {
+          chapter: {
+            ...(classId ? { classId } : {}),
+            ...(subjectId ? { subjectId } : {}),
+          },
+        }
+      : {}),
     ...(isActive === undefined ? {} : { isActive }),
 
     ...(search
@@ -353,4 +363,44 @@ export const deleteKeywordRevision = async (
   if (keywordRevision.imageKey) {
     await removeUploadedFile(keywordRevision.imageKey);
   }
+};
+
+// Student view: chapters of a class + subject, each with its active keyword revisions
+export const getStudentKeywordRevisions = async (
+  classId: string,
+  subjectId: string,
+) => {
+  const chapters = await prisma.chapter.findMany({
+    where: {
+      classId,
+      subjectId,
+      keywordRevisions: {
+        some: {
+          isActive: true,
+        },
+      },
+    },
+    orderBy: {
+      order: "asc",
+    },
+    select: {
+      id: true,
+      name: true,
+      slug: true,
+      order: true,
+      keywordRevisions: {
+        where: {
+          isActive: true,
+        },
+        orderBy: {
+          order: "asc",
+        },
+      },
+    },
+  });
+
+  return chapters.map(({ keywordRevisions, ...chapter }) => ({
+    ...chapter,
+    keywordRevisions: keywordRevisions.map(formatKeywordRevision),
+  }));
 };

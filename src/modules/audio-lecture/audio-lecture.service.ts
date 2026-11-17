@@ -38,12 +38,22 @@ export const getAudioLectures = async (
   limit: number,
   search?: string,
   chapterId?: string,
+  classId?: string,
+  subjectId?: string,
   isActive?: boolean,
 ) => {
   const skip = (page - 1) * limit;
 
   const where = {
     ...(chapterId ? { chapterId } : {}),
+    ...(classId || subjectId
+      ? {
+          chapter: {
+            ...(classId ? { classId } : {}),
+            ...(subjectId ? { subjectId } : {}),
+          },
+        }
+      : {}),
     ...(isActive === undefined ? {} : { isActive }),
 
     ...(search

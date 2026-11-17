@@ -2,6 +2,7 @@ import { Router } from "express";
 
 import {
   getKeywordRevisions,
+  getStudentKeywordRevisions,
   getKeywordRevisionById,
   getKeywordRevisionBySlug,
   createKeywordRevision,
@@ -27,6 +28,9 @@ router.use(authMiddleware);
 
 // Student + Admin + Super Admin
 router.get("/", getKeywordRevisions);
+
+// Chapters with their active keyword revisions (must be before /:id)
+router.get("/student", getStudentKeywordRevisions);
 
 router.get("/:id", getKeywordRevisionById);
 

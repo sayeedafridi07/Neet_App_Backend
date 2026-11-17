@@ -15,7 +15,7 @@ export const getAudioLectures = async (
   next: NextFunction,
 ) => {
   try {
-    const { page, limit, search, chapterId, isActive } =
+    const { page, limit, search, chapterId, classId, subjectId, isActive } =
       getAudioLecturesSchema.parse(req.query);
 
     const result = await audioLectureService.getAudioLectures(
@@ -23,6 +23,8 @@ export const getAudioLectures = async (
       limit,
       search,
       chapterId,
+      classId,
+      subjectId,
       isActive,
     );
 

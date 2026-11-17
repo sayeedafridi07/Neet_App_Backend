@@ -16,16 +16,32 @@ import { createSubjectSchema, updateSubjectSchema } from "./subject.schema.js";
 
 const router = Router();
 
-router.use(
-  authMiddleware,
+// Authenticate all requests
+router.use(authMiddleware);
+
+// Student + Admin + Super Admin
+router.get("/", getSubjects);
+
+router.get("/:id", getSubjectById);
+
+router.get("/slug/:slug", getSubjectBySlug);
+
+// Admin + Super Admin
+router.post(
+  "/",
   allowRoles("ADMIN", "SUPER_ADMIN"),
+  validate(createSubjectSchema),
+  createSubject,
 );
 
-router.get("/", getSubjects);
-router.get("/:id", getSubjectById);
-router.get("/slug/:slug", getSubjectBySlug);
-router.post("/", validate(createSubjectSchema), createSubject);
-router.patch("/:id", validate(updateSubjectSchema), updateSubject);
+router.patch(
+  "/:id",
+  allowRoles("ADMIN", "SUPER_ADMIN"),
+  validate(updateSubjectSchema),
+  updateSubject,
+);
+
+// Super Admin only
 router.delete("/:id", allowRoles("SUPER_ADMIN"), deleteSubject);
 
 export default router;

@@ -86,6 +86,10 @@ export const getQuizzesSchema = z.object({
 
   chapterId: z.uuid("Invalid chapter ID").optional(),
 
+  classId: z.uuid("Invalid class ID").optional(),
+
+  subjectId: z.uuid("Invalid subject ID").optional(),
+
   type: z.enum(QuizType).optional(),
 
   isActive: z

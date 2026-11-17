@@ -26,7 +26,8 @@ export const getQuizzes = async (
   next: NextFunction,
 ) => {
   try {
-    const { page, limit, search, chapterId, isActive } = getQuizzesSchema.parse(
+    const { page, limit, search, chapterId, classId, subjectId, isActive } =
+      getQuizzesSchema.parse(
       req.query,
     );
 
@@ -35,6 +36,8 @@ export const getQuizzes = async (
       limit,
       search,
       chapterId,
+      classId,
+      subjectId,
       isActive,
     );
 

@@ -27,41 +27,56 @@ import {
 
 const router = Router();
 
-router.use(
-  authMiddleware,
-  allowRoles("ADMIN", "SUPER_ADMIN"),
-);
+// Authenticate all requests
+router.use(authMiddleware);
 
+// Student + Admin + Super Admin
 router.get("/", getQuizzes);
 router.get("/:id", getQuizById);
-router.post("/", validate(createQuizSchema), createQuiz);
-router.patch("/:id", validate(updateQuizSchema), updateQuiz);
-router.delete(
-  "/:id",
-  allowRoles("SUPER_ADMIN"),
-  deleteQuiz,
+router.get("/:quizId/questions", getQuestions);
+router.get("/:quizId/questions/:questionId", getQuestionById);
+
+// Admin + Super Admin
+router.post(
+  "/",
+  allowRoles("ADMIN", "SUPER_ADMIN"),
+  validate(createQuizSchema),
+  createQuiz,
 );
 
-router.get("/:quizId/questions", getQuestions);
+router.patch(
+  "/:id",
+  allowRoles("ADMIN", "SUPER_ADMIN"),
+  validate(updateQuizSchema),
+  updateQuiz,
+);
+
 router.post(
   "/:quizId/questions",
+  allowRoles("ADMIN", "SUPER_ADMIN"),
   handleQuestionImageUpload,
   validate(createQuestionSchema),
   createQuestion,
 );
+
 router.post(
   "/:quizId/questions/import",
+  allowRoles("ADMIN", "SUPER_ADMIN"),
   handleDocumentUpload,
   importQuestions,
 );
 
-router.get("/:quizId/questions/:questionId", getQuestionById);
 router.patch(
   "/:quizId/questions/:questionId",
+  allowRoles("ADMIN", "SUPER_ADMIN"),
   handleQuestionImageUpload,
   validate(updateQuestionSchema),
   updateQuestion,
 );
+
+// Super Admin only
+router.delete("/:id", allowRoles("SUPER_ADMIN"), deleteQuiz);
+
 router.delete(
   "/:quizId/questions/:questionId",
   allowRoles("SUPER_ADMIN"),

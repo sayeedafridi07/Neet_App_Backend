@@ -3,6 +3,50 @@ import { AppError } from "../../utils/app-error.js";
 import { generateSlug } from "../../utils/slug.js";
 import type { CreateSubjectData, UpdateSubjectData } from "./subject.schema.js";
 
+type SubjectCounts = {
+  audioLectures: number;
+  keywordRevisions: number;
+  quizzes: number;
+};
+
+const attachCounts = async <T extends { id: string }>(
+  subjects: T[],
+): Promise<(T & { counts: SubjectCounts })[]> => {
+  if (subjects.length === 0) return [];
+
+  const chapters = await prisma.chapter.findMany({
+    where: { subjectId: { in: subjects.map((s) => s.id) } },
+    select: {
+      subjectId: true,
+      _count: {
+        select: { audioLectures: true, keywordRevisions: true, quizzes: true },
+      },
+    },
+  });
+
+  const totals = new Map<string, SubjectCounts>();
+  for (const { subjectId, _count } of chapters) {
+    const t = totals.get(subjectId) ?? {
+      audioLectures: 0,
+      keywordRevisions: 0,
+      quizzes: 0,
+    };
+    t.audioLectures += _count.audioLectures;
+    t.keywordRevisions += _count.keywordRevisions;
+    t.quizzes += _count.quizzes;
+    totals.set(subjectId, t);
+  }
+
+  return subjects.map((s) => ({
+    ...s,
+    counts: totals.get(s.id) ?? {
+      audioLectures: 0,
+      keywordRevisions: 0,
+      quizzes: 0,
+    },
+  }));
+};
+
 export const getSubjects = async (
   page: number,
   limit: number,
@@ -57,7 +101,7 @@ export const getSubjects = async (
   ]);
 
   return {
-    subjects,
+    subjects: await attachCounts(subjects),
     pagination: {
       page,
       limit,
@@ -68,19 +112,29 @@ export const getSubjects = async (
 };
 
 export const getSubjectById = async (id: string) => {
-  return prisma.subject.findUnique({
+  const subject = await prisma.subject.findUnique({
     where: {
       id,
     },
   });
+
+  if (!subject) return null;
+
+  const [withCounts] = await attachCounts([subject]);
+  return withCounts;
 };
 
 export const getSubjectBySlug = async (slug: string) => {
-  return prisma.subject.findUnique({
+  const subject = await prisma.subject.findUnique({
     where: {
       slug,
     },
   });
+
+  if (!subject) return null;
+
+  const [withCounts] = await attachCounts([subject]);
+  return withCounts;
 };
 
 export const createSubject = async (data: CreateSubjectData) => {

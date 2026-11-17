@@ -16,16 +16,30 @@ import { createClassSchema, updateClassSchema } from "./class.schema.js";
 
 const router = Router();
 
-router.use(
-  authMiddleware,
-  allowRoles("ADMIN", "SUPER_ADMIN"),
-);
+// Authenticate all requests
+router.use(authMiddleware);
 
+// Student + Admin + Super Admin
 router.get("/", getClasses);
 router.get("/:id", getClassById);
 router.get("/slug/:slug", getClassBySlug);
-router.post("/", validate(createClassSchema), createClass);
-router.patch("/:id", validate(updateClassSchema), updateClass);
+
+// Admin + Super Admin
+router.post(
+  "/",
+  allowRoles("ADMIN", "SUPER_ADMIN"),
+  validate(createClassSchema),
+  createClass,
+);
+
+router.patch(
+  "/:id",
+  allowRoles("ADMIN", "SUPER_ADMIN"),
+  validate(updateClassSchema),
+  updateClass,
+);
+
+// Super Admin only
 router.delete("/:id", allowRoles("SUPER_ADMIN"), deleteClass);
 
 export default router;
