@@ -102,28 +102,11 @@ export const getKeywordRevisions = async (
   };
 };
 
-export const getKeywordRevisionById = async (id: string) => {
-  const keywordRevision = await prisma.keywordRevision.findUnique({
-    where: {
-      id,
-    },
-  });
-
-  if (!keywordRevision) {
-    throw new AppError(404, "Keyword revision not found");
-  }
-
-  return formatKeywordRevision(keywordRevision);
-};
-
-export const getKeywordRevisionBySlug = async (
-  chapterId: string,
-  slug: string,
-) => {
+export const getKeywordRevisionById = async (id: string, activeOnly = false) => {
   const keywordRevision = await prisma.keywordRevision.findFirst({
     where: {
-      chapterId,
-      slug,
+      id,
+      ...(activeOnly ? { isActive: true } : {}),
     },
   });
 

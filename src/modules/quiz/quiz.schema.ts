@@ -91,11 +91,6 @@ export const getQuizzesSchema = z.object({
   subjectId: z.uuid("Invalid subject ID").optional(),
 
   type: z.enum(QuizType).optional(),
-
-  isActive: z
-    .enum(["true", "false"])
-    .transform((value) => value === "true")
-    .optional(),
 });
 
 /* -------------------------------------------------------------------------- */
@@ -177,11 +172,19 @@ export const getQuestionsSchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(20),
 
   search: z.string().trim().optional(),
+});
 
-  isActive: z
-    .enum(["true", "false"])
-    .transform((value) => value === "true")
-    .optional(),
+/* -------------------------------------------------------------------------- */
+/* ATTEMPT                                                                    */
+/* -------------------------------------------------------------------------- */
+
+export const saveAnswerSchema = z.object({
+  questionId: z.uuid("Invalid question ID"),
+
+  // null clears the selection
+  selectedOptionId: z.uuid("Invalid option ID").nullable().optional(),
+
+  markedForReview: z.boolean().optional().default(false),
 });
 
 /* -------------------------------------------------------------------------- */
@@ -195,3 +198,5 @@ export type UpdateQuizData = z.infer<typeof updateQuizSchema>;
 export type CreateQuestionData = z.infer<typeof createQuestionSchema>;
 
 export type UpdateQuestionData = z.infer<typeof updateQuestionSchema>;
+
+export type SaveAnswerData = z.infer<typeof saveAnswerSchema>;

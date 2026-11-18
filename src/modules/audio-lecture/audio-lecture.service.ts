@@ -103,28 +103,11 @@ export const getAudioLectures = async (
   };
 };
 
-export const getAudioLectureById = async (id: string) => {
-  const audioLecture = await prisma.audioLecture.findUnique({
-    where: {
-      id,
-    },
-  });
-
-  if (!audioLecture) {
-    throw new AppError(404, "Audio lecture not found");
-  }
-
-  return formatAudioLecture(audioLecture);
-};
-
-export const getAudioLectureBySlug = async (
-  chapterId: string,
-  slug: string,
-) => {
+export const getAudioLectureById = async (id: string, activeOnly = false) => {
   const audioLecture = await prisma.audioLecture.findFirst({
     where: {
-      chapterId,
-      slug,
+      id,
+      ...(activeOnly ? { isActive: true } : {}),
     },
   });
 

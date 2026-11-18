@@ -50,7 +50,6 @@ export const getAudioLecturesSchema = z.object({
   chapterId: z.uuid("Invalid chapter ID").optional(),
   classId: z.uuid("Invalid class ID").optional(),
   subjectId: z.uuid("Invalid subject ID").optional(),
-  isActive: z.boolean().optional(),
 });
 
 export type CreateAudioLectureData = z.infer<typeof createAudioLectureSchema>;

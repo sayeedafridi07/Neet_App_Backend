@@ -3,7 +3,6 @@ import { Router } from "express";
 import {
   getClasses,
   getClassById,
-  getClassBySlug,
   createClass,
   updateClass,
   deleteClass,
@@ -22,7 +21,6 @@ router.use(authMiddleware);
 // Student + Admin + Super Admin
 router.get("/", getClasses);
 router.get("/:id", getClassById);
-router.get("/slug/:slug", getClassBySlug);
 
 // Admin + Super Admin
 router.post(

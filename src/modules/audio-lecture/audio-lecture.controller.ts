@@ -15,8 +15,11 @@ export const getAudioLectures = async (
   next: NextFunction,
 ) => {
   try {
-    const { page, limit, search, chapterId, classId, subjectId, isActive } =
+    const { page, limit, search, chapterId, classId, subjectId } =
       getAudioLecturesSchema.parse(req.query);
+
+    // Students only see active lectures; admins see everything
+    const isActive = req.auth?.type === "STUDENT" ? true : undefined;
 
     const result = await audioLectureService.getAudioLectures(
       page,
@@ -40,27 +43,9 @@ export const getAudioLectureById = async (
   next: NextFunction,
 ) => {
   try {
-    const audioLecture = await audioLectureService.getAudioLectureById(req.params.id);
-
-    if (!audioLecture) {
-      return sendResponse(res, 404, true, "Audio lecture not found");
-    }
-
-    return sendResponse(res, 200, true, "Audio lecture retrieved successfully", audioLecture);
-  } catch (error) {
-    next(error);
-  }
-};
-
-export const getAudioLectureBySlug = async (
-  req: Request<{ chapterId: string; slug: string }>,
-  res: Response,
-  next: NextFunction,
-) => {
-  try {
-    const audioLecture = await audioLectureService.getAudioLectureBySlug(
-      req.params.chapterId,
-      req.params.slug,
+    const audioLecture = await audioLectureService.getAudioLectureById(
+      req.params.id,
+      req.auth?.type === "STUDENT",
     );
 
     if (!audioLecture) {

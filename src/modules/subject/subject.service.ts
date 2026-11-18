@@ -1,3 +1,4 @@
+import type { Prisma } from "../../generated/prisma/client.js";
 import prisma from "../../config/prisma.js";
 import { AppError } from "../../utils/app-error.js";
 import { generateSlug } from "../../utils/slug.js";
@@ -51,39 +52,27 @@ export const getSubjects = async (
   page: number,
   limit: number,
   search?: string,
+  onlyWithContent = false,
 ) => {
   const skip = (page - 1) * limit;
 
-  const where = search
-    ? {
-        OR: [
-          {
-            name: {
-              contains: search,
-              mode: "insensitive" as const,
-            },
-          },
-          {
-            phone: {
-              contains: search,
-              mode: "insensitive" as const,
-            },
-          },
-          {
-            city: {
-              contains: search,
-              mode: "insensitive" as const,
-            },
-          },
-          {
-            schoolName: {
-              contains: search,
-              mode: "insensitive" as const,
-            },
-          },
-        ],
-      }
-    : undefined;
+  const where: Prisma.SubjectWhereInput = {
+    ...(search && {
+      name: { contains: search, mode: "insensitive" },
+    }),
+    // Students only see subjects that have at least one piece of content
+    ...(onlyWithContent && {
+      chapters: {
+        some: {
+          OR: [
+            { audioLectures: { some: {} } },
+            { keywordRevisions: { some: {} } },
+            { quizzes: { some: {} } },
+          ],
+        },
+      },
+    }),
+  };
 
   const [subjects, total] = await Promise.all([
     prisma.subject.findMany({
@@ -115,19 +104,6 @@ export const getSubjectById = async (id: string) => {
   const subject = await prisma.subject.findUnique({
     where: {
       id,
-    },
-  });
-
-  if (!subject) return null;
-
-  const [withCounts] = await attachCounts([subject]);
-  return withCounts;
-};
-
-export const getSubjectBySlug = async (slug: string) => {
-  const subject = await prisma.subject.findUnique({
-    where: {
-      slug,
     },
   });
 

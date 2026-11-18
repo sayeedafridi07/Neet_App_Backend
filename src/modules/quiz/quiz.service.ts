@@ -189,10 +189,11 @@ export const getQuizzes = async (
   };
 };
 
-export const getQuizById = async (id: string) => {
-  const quiz = await prisma.quiz.findUnique({
+export const getQuizById = async (id: string, activeOnly = false) => {
+  const quiz = await prisma.quiz.findFirst({
     where: {
       id,
+      ...(activeOnly ? { isActive: true } : {}),
     },
 
     include: quizInclude,
@@ -318,10 +319,12 @@ export const getQuestions = async (
   limit: number,
   search?: string,
   isActive?: boolean,
+  activeQuizOnly = false,
 ) => {
-  const quiz = await prisma.quiz.findUnique({
+  const quiz = await prisma.quiz.findFirst({
     where: {
       id: quizId,
+      ...(activeQuizOnly ? { isActive: true } : {}),
     },
     select: {
       id: true,
@@ -382,11 +385,17 @@ export const getQuestions = async (
   };
 };
 
-export const getQuestionById = async (quizId: string, questionId: string) => {
+export const getQuestionById = async (
+  quizId: string,
+  questionId: string,
+  activeOnly = false,
+) => {
   const question = await prisma.question.findFirst({
     where: {
       id: questionId,
       quizId,
+      // Students need both the question and its quiz to be active
+      ...(activeOnly ? { isActive: true, quiz: { isActive: true } } : {}),
     },
     include: {
       options: {

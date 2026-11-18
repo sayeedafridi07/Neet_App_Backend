@@ -3,7 +3,6 @@ import { Router } from "express";
 import {
   getAudioLectures,
   getAudioLectureById,
-  getAudioLectureBySlug,
   createAudioLecture,
   updateAudioLecture,
   toggleStatus,
@@ -29,8 +28,6 @@ router.use(authMiddleware);
 router.get("/", getAudioLectures);
 
 router.get("/:id", getAudioLectureById);
-
-router.get("/chapter/:chapterId/slug/:slug", getAudioLectureBySlug);
 
 // Admin + Super Admin
 router.post(

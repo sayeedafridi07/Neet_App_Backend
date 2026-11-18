@@ -8,8 +8,13 @@ import {
   getQuestionById,
   getQuestions,
   getQuizById,
+  getMyAttempts,
+  getQuizResult,
   getQuizzes,
   importQuestions,
+  saveAnswer,
+  startQuiz,
+  submitQuiz,
   updateQuestion,
   updateQuiz
 } from "./quiz.controller.js";
@@ -21,6 +26,7 @@ import { validate } from "../../middlewares/validate.middleware.js";
 import {
   createQuestionSchema,
   createQuizSchema,
+  saveAnswerSchema,
   updateQuestionSchema,
   updateQuizSchema,
 } from "./quiz.schema.js";
@@ -29,6 +35,18 @@ const router = Router();
 
 // Authenticate all requests
 router.use(authMiddleware);
+
+// Student only: attempting a quiz
+router.post("/:quizId/start", allowRoles("STUDENT"), startQuiz);
+router.get("/:quizId/attempts", allowRoles("STUDENT"), getMyAttempts);
+router.patch(
+  "/attempts/:attemptId/answers",
+  allowRoles("STUDENT"),
+  validate(saveAnswerSchema),
+  saveAnswer,
+);
+router.post("/attempts/:attemptId/submit", allowRoles("STUDENT"), submitQuiz);
+router.get("/attempts/:attemptId/result", allowRoles("STUDENT"), getQuizResult);
 
 // Student + Admin + Super Admin
 router.get("/", getQuizzes);

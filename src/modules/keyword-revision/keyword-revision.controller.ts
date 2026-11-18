@@ -18,8 +18,11 @@ export const getKeywordRevisions = async (
   next: NextFunction,
 ) => {
   try {
-    const { page, limit, search, chapterId, classId, subjectId, isActive } =
+    const { page, limit, search, chapterId, classId, subjectId } =
       getKeywordRevisionsSchema.parse(req.query);
+
+    // Students only see active keyword revisions; admins see everything
+    const isActive = req.auth?.type === "STUDENT" ? true : undefined;
 
     const result = await keywordRevisionService.getKeywordRevisions(
       page,
@@ -43,27 +46,9 @@ export const getKeywordRevisionById = async (
   next: NextFunction,
 ) => {
   try {
-    const keywordRevision = await keywordRevisionService.getKeywordRevisionById(req.params.id);
-
-    if (!keywordRevision) {
-      return sendResponse(res, 404, true, "Keyword revision not found");
-    }
-
-    return sendResponse(res, 200, true, "Keyword revision retrieved successfully", keywordRevision);
-  } catch (error) {
-    next(error);
-  }
-};
-
-export const getKeywordRevisionBySlug = async (
-  req: Request<{ chapterId: string; slug: string }>,
-  res: Response,
-  next: NextFunction,
-) => {
-  try {
-    const keywordRevision = await keywordRevisionService.getKeywordRevisionBySlug(
-      req.params.chapterId,
-      req.params.slug,
+    const keywordRevision = await keywordRevisionService.getKeywordRevisionById(
+      req.params.id,
+      req.auth?.type === "STUDENT",
     );
 
     if (!keywordRevision) {

@@ -53,14 +53,6 @@ export const getClassById = async (id: string) => {
   });
 };
 
-export const getClassBySlug = async (slug: string) => {
-  return prisma.academicClass.findFirst({
-    where: {
-      slug,
-    },
-  });
-};
-
 export const createClass = async (data: CreateClassData) => {
   const slug = generateSlug(data.name);
 

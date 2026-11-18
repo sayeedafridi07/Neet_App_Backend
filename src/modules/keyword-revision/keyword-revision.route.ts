@@ -4,7 +4,6 @@ import {
   getKeywordRevisions,
   getStudentKeywordRevisions,
   getKeywordRevisionById,
-  getKeywordRevisionBySlug,
   createKeywordRevision,
   updateKeywordRevision,
   toggleStatus,
@@ -33,8 +32,6 @@ router.get("/", getKeywordRevisions);
 router.get("/student", getStudentKeywordRevisions);
 
 router.get("/:id", getKeywordRevisionById);
-
-router.get("/chapter/:chapterId/slug/:slug", getKeywordRevisionBySlug);
 
 // Admin + Super Admin
 router.post(

@@ -37,24 +37,6 @@ export const getClassById = async (
   }
 };
 
-export const getClassBySlug = async (
-  req: Request<{ slug: string }>,
-  res: Response,
-  next: NextFunction,
-) => {
-  try {
-    const academicClass = await classService.getClassBySlug(req.params.slug);
-
-    if (!academicClass) {
-      return sendResponse(res, 404, true, "Class not found");
-    }
-
-    return sendResponse(res, 200, true, "Class retrieved successfully", academicClass);
-  } catch (error) {
-    next(error);
-  }
-};
-
 export const createClass = async (
   req: Request,
   res: Response,

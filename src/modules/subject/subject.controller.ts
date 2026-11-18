@@ -11,7 +11,12 @@ export const getSubjects = async (
   try {
     const { page, limit, search } = getSubjectsSchema.parse(req.query);
 
-    const result = await subjectService.getSubjects(page, limit, search);
+    const result = await subjectService.getSubjects(
+      page,
+      limit,
+      search,
+      req.auth?.type === "STUDENT",
+    );
 
     return sendResponse(res, 200, true, "Subjects retrieved successfully", result);
   } catch (error) {
@@ -26,24 +31,6 @@ export const getSubjectById = async (
 ) => {
   try {
     const subject = await subjectService.getSubjectById(req.params.id);
-
-    if (!subject) {
-      return sendResponse(res, 404, true, "Subject not found");
-    }
-
-    return sendResponse(res, 200, true, "Subject retrieved successfully", subject);
-  } catch (error) {
-    next(error);
-  }
-};
-
-export const getSubjectBySlug = async (
-  req: Request<{ slug: string }>,
-  res: Response,
-  next: NextFunction,
-) => {
-  try {
-    const subject = await subjectService.getSubjectBySlug(req.params.slug);
 
     if (!subject) {
       return sendResponse(res, 404, true, "Subject not found");

@@ -1,5 +1,6 @@
 import type { Request, Response, NextFunction } from "express";
 import * as quizService from "./quiz.service.js";
+import * as attemptService from "./quiz-attempt.service.js";
 import { sendResponse } from "../../utils/response.js";
 import { AppError } from "../../utils/app-error.js";
 import { getDocumentKind } from "../../config/multer.js";
@@ -20,16 +21,19 @@ const getQuestionImages = (req: Request): quizService.QuestionImages => ({
   ),
 });
 
+const isStudent = (req: Request) => req.auth?.type === "STUDENT";
+
 export const getQuizzes = async (
   req: Request,
   res: Response,
   next: NextFunction,
 ) => {
   try {
-    const { page, limit, search, chapterId, classId, subjectId, isActive } =
-      getQuizzesSchema.parse(
-      req.query,
-    );
+    const { page, limit, search, chapterId, classId, subjectId } =
+      getQuizzesSchema.parse(req.query);
+
+    // Students only see active quizzes; admins see everything
+    const isActive = isStudent(req) ? true : undefined;
 
     const result = await quizService.getQuizzes(
       page,
@@ -59,7 +63,7 @@ export const getQuizById = async (
   next: NextFunction,
 ) => {
   try {
-    const quiz = await quizService.getQuizById(req.params.id);
+    const quiz = await quizService.getQuizById(req.params.id, isStudent(req));
 
     return sendResponse(res, 200, true, "Quiz retrieved successfully", quiz);
   } catch (error) {
@@ -115,9 +119,10 @@ export const getQuestions = async (
   next: NextFunction,
 ) => {
   try {
-    const { page, limit, search, isActive } = getQuestionsSchema.parse(
-      req.query,
-    );
+    const { page, limit, search } = getQuestionsSchema.parse(req.query);
+
+    // Students only see active questions; admins see everything
+    const isActive = isStudent(req) ? true : undefined;
 
     const result = await quizService.getQuestions(
       req.params.quizId,
@@ -125,6 +130,7 @@ export const getQuestions = async (
       limit,
       search,
       isActive,
+      isStudent(req),
     );
 
     return sendResponse(
@@ -148,6 +154,7 @@ export const getQuestionById = async (
     const question = await quizService.getQuestionById(
       req.params.quizId,
       req.params.questionId,
+      isStudent(req),
     );
 
     return sendResponse(
@@ -291,6 +298,110 @@ export const deleteOption = async (
     );
 
     return sendResponse(res, 200, true, "Option deleted successfully");
+  } catch (error) {
+    next(error);
+  }
+};
+
+/* -------------------------------------------------------------------------- */
+/* ATTEMPTS (student)                                                         */
+/* -------------------------------------------------------------------------- */
+
+const getUserId = (req: Request) => {
+  if (!req.auth) {
+    throw new AppError(401, "Authentication required");
+  }
+
+  return req.auth.userId;
+};
+
+export const startQuiz = async (
+  req: Request<{ quizId: string }>,
+  res: Response,
+  next: NextFunction,
+) => {
+  try {
+    const result = await attemptService.startQuiz(
+      req.params.quizId,
+      getUserId(req),
+    );
+
+    return sendResponse(
+      res,
+      result.resumed ? 200 : 201,
+      true,
+      result.resumed ? "Quiz resumed successfully" : "Quiz started successfully",
+      result,
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const getMyAttempts = async (
+  req: Request<{ quizId: string }>,
+  res: Response,
+  next: NextFunction,
+) => {
+  try {
+    const attempts = await attemptService.getMyAttempts(
+      req.params.quizId,
+      getUserId(req),
+    );
+
+    return sendResponse(res, 200, true, "Attempts retrieved successfully", attempts);
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const saveAnswer = async (
+  req: Request<{ attemptId: string }>,
+  res: Response,
+  next: NextFunction,
+) => {
+  try {
+    const answer = await attemptService.saveAnswer(
+      req.params.attemptId,
+      getUserId(req),
+      req.body,
+    );
+
+    return sendResponse(res, 200, true, "Answer saved successfully", answer);
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const submitQuiz = async (
+  req: Request<{ attemptId: string }>,
+  res: Response,
+  next: NextFunction,
+) => {
+  try {
+    const result = await attemptService.submitQuiz(
+      req.params.attemptId,
+      getUserId(req),
+    );
+
+    return sendResponse(res, 200, true, "Quiz submitted successfully", result);
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const getQuizResult = async (
+  req: Request<{ attemptId: string }>,
+  res: Response,
+  next: NextFunction,
+) => {
+  try {
+    const result = await attemptService.getQuizResult(
+      req.params.attemptId,
+      getUserId(req),
+    );
+
+    return sendResponse(res, 200, true, "Result retrieved successfully", result);
   } catch (error) {
     next(error);
   }

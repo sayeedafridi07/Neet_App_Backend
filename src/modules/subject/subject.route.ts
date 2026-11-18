@@ -3,7 +3,6 @@ import { Router } from "express";
 import {
   getSubjects,
   getSubjectById,
-  getSubjectBySlug,
   createSubject,
   updateSubject,
   deleteSubject,
@@ -23,8 +22,6 @@ router.use(authMiddleware);
 router.get("/", getSubjects);
 
 router.get("/:id", getSubjectById);
-
-router.get("/slug/:slug", getSubjectBySlug);
 
 // Admin + Super Admin
 router.post(
