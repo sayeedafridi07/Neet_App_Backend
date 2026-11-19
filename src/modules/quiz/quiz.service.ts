@@ -319,12 +319,11 @@ export const getQuestions = async (
   limit: number,
   search?: string,
   isActive?: boolean,
-  activeQuizOnly = false,
 ) => {
   const quiz = await prisma.quiz.findFirst({
     where: {
       id: quizId,
-      ...(activeQuizOnly ? { isActive: true } : {}),
+      ...(isActive === undefined ? {} : { isActive }),
     },
     select: {
       id: true,

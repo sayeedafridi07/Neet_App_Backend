@@ -10,17 +10,43 @@ type SubjectCounts = {
   quizzes: number;
 };
 
+const activeContentFilter = (onlyActive: boolean) =>
+  onlyActive ? { where: { isActive: true } } : true;
+
+// Subject has at least one chapter with (active) content
+const hasContentWhere = (onlyActive: boolean): Prisma.SubjectWhereInput => {
+  const content = onlyActive ? { some: { isActive: true } } : { some: {} };
+  return {
+    chapters: {
+      some: {
+        OR: [
+          { audioLectures: content },
+          { keywordRevisions: content },
+          { quizzes: content },
+        ],
+      },
+    },
+  };
+};
+
 const attachCounts = async <T extends { id: string }>(
   subjects: T[],
+  onlyActive = false,
 ): Promise<(T & { counts: SubjectCounts })[]> => {
   if (subjects.length === 0) return [];
+
+  const countFilter = activeContentFilter(onlyActive);
 
   const chapters = await prisma.chapter.findMany({
     where: { subjectId: { in: subjects.map((s) => s.id) } },
     select: {
       subjectId: true,
       _count: {
-        select: { audioLectures: true, keywordRevisions: true, quizzes: true },
+        select: {
+          audioLectures: countFilter,
+          keywordRevisions: countFilter,
+          quizzes: countFilter,
+        },
       },
     },
   });
@@ -60,18 +86,8 @@ export const getSubjects = async (
     ...(search && {
       name: { contains: search, mode: "insensitive" },
     }),
-    // Students only see subjects that have at least one piece of content
-    ...(onlyWithContent && {
-      chapters: {
-        some: {
-          OR: [
-            { audioLectures: { some: {} } },
-            { keywordRevisions: { some: {} } },
-            { quizzes: { some: {} } },
-          ],
-        },
-      },
-    }),
+    // Students only see subjects that have at least one piece of active content
+    ...(onlyWithContent && hasContentWhere(true)),
   };
 
   const [subjects, total] = await Promise.all([
@@ -90,7 +106,7 @@ export const getSubjects = async (
   ]);
 
   return {
-    subjects: await attachCounts(subjects),
+    subjects: await attachCounts(subjects, onlyWithContent),
     pagination: {
       page,
       limit,
@@ -100,16 +116,18 @@ export const getSubjects = async (
   };
 };
 
-export const getSubjectById = async (id: string) => {
-  const subject = await prisma.subject.findUnique({
+export const getSubjectById = async (id: string, onlyWithContent = false) => {
+  const subject = await prisma.subject.findFirst({
     where: {
       id,
+      // Students only see the subject if it has active content
+      ...(onlyWithContent && hasContentWhere(true)),
     },
   });
 
   if (!subject) return null;
 
-  const [withCounts] = await attachCounts([subject]);
+  const [withCounts] = await attachCounts([subject], onlyWithContent);
   return withCounts;
 };
 

@@ -30,7 +30,10 @@ export const getSubjectById = async (
   next: NextFunction,
 ) => {
   try {
-    const subject = await subjectService.getSubjectById(req.params.id);
+    const subject = await subjectService.getSubjectById(
+      req.params.id,
+      req.auth?.type === "STUDENT",
+    );
 
     if (!subject) {
       return sendResponse(res, 404, true, "Subject not found");

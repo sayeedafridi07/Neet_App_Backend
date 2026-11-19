@@ -130,7 +130,6 @@ export const getQuestions = async (
       limit,
       search,
       isActive,
-      isStudent(req),
     );
 
     return sendResponse(
