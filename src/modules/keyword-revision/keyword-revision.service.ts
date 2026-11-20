@@ -29,7 +29,9 @@ const formatKeywordRevision = (keywordRevision: any) => {
 
   return {
     ...revision,
-    audioUrl: getUploadUrl(audioKey),
+    // Imported keywords carry a placeholder key with no file behind it.
+    audioUrl:
+      audioKey === PLACEHOLDER_AUDIO_KEY ? null : getUploadUrl(audioKey),
     imageUrl: imageKey ? getUploadUrl(imageKey) : null,
   };
 };
