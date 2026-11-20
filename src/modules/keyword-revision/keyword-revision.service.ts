@@ -11,6 +11,8 @@ import {
   removeUploadedFile,
 } from "../../config/multer.js";
 
+import { parseKeywordRevisionsFromXlsx } from "./keyword-revision.import.js";
+
 import type {
   CreateKeywordRevisionData,
   UpdateKeywordRevisionData,
@@ -386,4 +388,101 @@ export const getStudentKeywordRevisions = async (
     ...chapter,
     keywordRevisions: keywordRevisions.map(formatKeywordRevision),
   }));
+};
+
+// Imported keywords have no audio yet. The key sits outside the managed
+// audio/ folder so removeUploadedFile never deletes it; replace it later by
+// uploading real audio through PATCH /:id.
+export const PLACEHOLDER_AUDIO_KEY = "placeholder/keyword-revision.mp3";
+const PLACEHOLDER_DURATION = 1;
+
+export const importKeywordRevisions = async (chapterId: string, buffer: Buffer) => {
+  const chapter = await prisma.chapter.findUnique({
+    where: { id: chapterId },
+    select: { id: true },
+  });
+
+  if (!chapter) {
+    throw new AppError(404, "Chapter not found");
+  }
+
+  let parsed;
+
+  try {
+    parsed = await parseKeywordRevisionsFromXlsx(buffer);
+  } catch (error) {
+    throw new AppError(
+      400,
+      `Could not read the spreadsheet. ${error instanceof Error ? error.message : ""}`.trim(),
+    );
+  }
+
+  if (!parsed.length) {
+    throw new AppError(400, "No keywords found in the first sheet");
+  }
+
+  const total = parsed.length;
+  const skipped: { index: number; preview: string; error: string }[] = [];
+
+  const existing = await prisma.keywordRevision.findMany({
+    where: { chapterId },
+    select: { slug: true, order: true },
+  });
+
+  const usedSlugs = new Set(existing.map((revision) => revision.slug));
+  let nextOrder = Math.max(0, ...existing.map((revision) => revision.order)) + 1;
+
+  const rows = [];
+
+  for (const entry of parsed) {
+    const preview = entry.title.slice(0, 80);
+
+    if (entry.error) {
+      skipped.push({ index: entry.index, preview, error: entry.error });
+      continue;
+    }
+
+    const slug = generateSlug(entry.title);
+
+    if (usedSlugs.has(slug)) {
+      skipped.push({
+        index: entry.index,
+        preview,
+        error: `Row ${entry.rowNumber}: keyword already exists in this chapter`,
+      });
+      continue;
+    }
+
+    usedSlugs.add(slug);
+
+    const order = entry.order ?? nextOrder;
+    nextOrder = Math.max(nextOrder, order + 1);
+
+    rows.push({
+      title: entry.title,
+      slug,
+      description: entry.description,
+      audioKey: PLACEHOLDER_AUDIO_KEY,
+      duration: entry.duration ?? PLACEHOLDER_DURATION,
+      order,
+      chapterId,
+    });
+  }
+
+  if (!rows.length) {
+    throw new AppError(
+      422,
+      `None of the ${total} keyword(s) could be imported: ` +
+        skipped.map((entry) => `#${entry.index} "${entry.preview}" - ${entry.error}`).join("; "),
+    );
+  }
+
+  const created = await prisma.keywordRevision.createManyAndReturn({ data: rows });
+
+  return {
+    total,
+    imported: created.length,
+    skipped,
+    keywordRevisions: created.map(formatKeywordRevision),
+  };
 };

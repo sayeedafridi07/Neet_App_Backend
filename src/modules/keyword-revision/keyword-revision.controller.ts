@@ -4,11 +4,14 @@ import { sendResponse } from "../../utils/response.js";
 import {
   getKeywordRevisionsSchema,
   getStudentKeywordRevisionsSchema,
+  importKeywordRevisionsSchema,
 } from "./keyword-revision.schema.js";
+import { AppError } from "../../utils/app-error.js";
 import {
   AUDIO_FIELD_NAME,
   IMAGE_FIELD_NAME,
   discardUploadedFiles,
+  getDocumentKind,
   getUploadedFile,
 } from "../../config/multer.js";
 
@@ -155,6 +158,41 @@ export const getStudentKeywordRevisions = async (
       true,
       "Keyword revisions retrieved successfully",
       chapters,
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const importKeywordRevisions = async (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) => {
+  try {
+    if (!req.file) {
+      throw new AppError(400, 'Upload a .xlsx file as "file"');
+    }
+
+    if (getDocumentKind(req.file.mimetype, req.file.originalname) !== "xlsx") {
+      throw new AppError(415, "Only .xlsx files are supported");
+    }
+
+    const { chapterId } = importKeywordRevisionsSchema.parse(req.body);
+
+    const result = await keywordRevisionService.importKeywordRevisions(
+      chapterId,
+      req.file.buffer,
+    );
+
+    return sendResponse(
+      res,
+      201,
+      true,
+      result.skipped.length
+        ? `${result.imported} of ${result.total} keyword(s) imported, ${result.skipped.length} skipped`
+        : `${result.imported} of ${result.total} keyword(s) imported successfully`,
+      result,
     );
   } catch (error) {
     next(error);

@@ -8,12 +8,13 @@ import {
   updateKeywordRevision,
   toggleStatus,
   deleteKeywordRevision,
+  importKeywordRevisions,
 } from "./keyword-revision.controller.js";
 
 import { authMiddleware } from "../../middlewares/auth.middleware.js";
 import { allowRoles } from "../../middlewares/allow-role.middleware.js";
 import { validate } from "../../middlewares/validate.middleware.js";
-import { handleAudioUpload } from "../../config/multer.js";
+import { handleAudioUpload, handleDocumentUpload } from "../../config/multer.js";
 
 import {
   createKeywordRevisionSchema,
@@ -40,6 +41,14 @@ router.post(
   handleAudioUpload,
   validate(createKeywordRevisionSchema),
   createKeywordRevision,
+);
+
+// Bulk create from an .xlsx sheet; audio is a placeholder until uploaded
+router.post(
+  "/import",
+  allowRoles("ADMIN", "SUPER_ADMIN"),
+  handleDocumentUpload,
+  importKeywordRevisions,
 );
 
 router.patch(

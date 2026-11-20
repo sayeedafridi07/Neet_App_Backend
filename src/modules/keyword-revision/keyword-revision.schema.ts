@@ -59,3 +59,7 @@ export const getStudentKeywordRevisionsSchema = z.object({
   classId: z.uuid("Invalid class ID"),
   subjectId: z.uuid("Invalid subject ID"),
 });
+
+export const importKeywordRevisionsSchema = z.object({
+  chapterId: z.uuid("Invalid chapter ID"),
+});
