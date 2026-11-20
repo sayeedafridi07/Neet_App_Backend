@@ -57,6 +57,43 @@ export const getQuizzes = async (
   }
 };
 
+// Active quizzes for the logged-in student, each with their completion %
+export const getStudentQuizzes = async (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) => {
+  try {
+    const { page, limit, search, chapterId, classId, subjectId } =
+      getQuizzesSchema.parse(req.query);
+
+    const result = await quizService.getQuizzes(
+      page,
+      limit,
+      search,
+      chapterId,
+      classId,
+      subjectId,
+      true,
+    );
+
+    const progress = await attemptService.getQuizzesProgress(
+      result.quizzes.map((quiz) => quiz.id),
+      getUserId(req),
+    );
+
+    return sendResponse(res, 200, true, "Quizzes retrieved successfully", {
+      ...result,
+      quizzes: result.quizzes.map((quiz) => ({
+        ...quiz,
+        progress: progress.get(quiz.id),
+      })),
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 export const getQuizById = async (
   req: Request<{ id: string }>,
   res: Response,

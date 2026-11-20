@@ -268,6 +268,13 @@ model QuizAttempt {
   // This protects historical attempts from later admin edits.
   questionsSnapshot Json
 
+  // Set (chunk of 50 questions) this attempt covers; null = the full quiz
+  setNumber Int?
+
+  // Progress round: when a student completes 100% and starts again, a new
+  // round begins and completion is counted from 0 (older rounds stay as history)
+  round Int @default(1)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -275,6 +282,7 @@ model QuizAttempt {
 
   @@index([quizId])
   @@index([userId])
+  @@index([userId, quizId, setNumber])
   @@index([status])
   @@index([expiresAt])
 }

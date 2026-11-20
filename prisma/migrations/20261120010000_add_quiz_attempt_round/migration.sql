@@ -1,0 +1,2 @@
+-- AlterTable
+ALTER TABLE "QuizAttempt" ADD COLUMN "round" INTEGER NOT NULL DEFAULT 1;

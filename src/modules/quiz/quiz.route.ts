@@ -11,6 +11,7 @@ import {
   getMyAttempts,
   getQuizResult,
   getQuizzes,
+  getStudentQuizzes,
   importQuestions,
   saveAnswer,
   startQuiz,
@@ -37,6 +38,7 @@ const router = Router();
 router.use(authMiddleware);
 
 // Student only: attempting a quiz
+router.get("/student", allowRoles("STUDENT"), getStudentQuizzes);
 router.post("/:quizId/start", allowRoles("STUDENT"), startQuiz);
 router.get("/:quizId/attempts", allowRoles("STUDENT"), getMyAttempts);
 router.patch(

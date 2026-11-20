@@ -11,6 +11,11 @@ import type { SaveAnswerData } from "./quiz.schema.js";
 // Used when a quiz has no durationMinutes set (NEET pace: ~1 min/question)
 const DEFAULT_MINUTES_PER_QUESTION = 1;
 
+// Large quizzes are split into sets of this many questions (by question order).
+// The last set holds the remainder, e.g. 84 questions -> sets of 50 and 34.
+export const QUESTIONS_PER_SET = 50;
+
+
 type SnapshotOption = {
   id: string;
   text: string;
@@ -38,6 +43,7 @@ type AttemptSnapshot = {
     correctMarks: number;
     wrongMarks: number;
     skippedMarks: number;
+    setNumber?: number | null;
   };
   questions: SnapshotQuestion[];
 };
@@ -108,6 +114,7 @@ const formatAttempt = (attempt: {
 const formatQuizInfo = (snapshot: AttemptSnapshot) => ({
   id: snapshot.quiz.id,
   title: snapshot.quiz.title,
+  setNumber: snapshot.quiz.setNumber ?? null,
   durationMinutes: snapshot.quiz.durationMinutes,
   totalQuestions: snapshot.questions.length,
   totalMarks: snapshot.questions.length * snapshot.quiz.correctMarks,
@@ -240,6 +247,73 @@ const getOwnAttempt = async (attemptId: string, userId: string) => {
 /* START / RESUME                                                             */
 /* -------------------------------------------------------------------------- */
 
+const getTotalSets = (totalQuestions: number) =>
+  Math.ceil(totalQuestions / QUESTIONS_PER_SET);
+
+const getSetQuestions = <T>(questions: T[], setNumber: number) =>
+  questions.slice(
+    (setNumber - 1) * QUESTIONS_PER_SET,
+    setNumber * QUESTIONS_PER_SET,
+  );
+
+const percentage = (part: number, total: number) =>
+  total === 0 ? 0 : Math.round((part / total) * 100);
+
+// Current progress round per quiz (highest round the user has an attempt in)
+const getCurrentRounds = async (quizIds: string[], userId: string) => {
+  const rounds = await prisma.quizAttempt.groupBy({
+    by: ["quizId"],
+    where: { userId, quizId: { in: quizIds } },
+    _max: { round: true },
+  });
+
+  return new Map(rounds.map((r) => [r.quizId, r._max.round ?? 1]));
+};
+
+// Questions (per quiz) the user has covered in their current round: every
+// question that was part of a finished set (submitted / auto-submitted /
+// expired), answered or skipped. Tracked per question so newly added
+// questions show up as not done yet.
+const getCompletedQuestionIds = async (quizIds: string[], userId: string) => {
+  const rounds = await getCurrentRounds(quizIds, userId);
+
+  const rows = await prisma.quizAttemptAnswer.findMany({
+    where: {
+      attempt: {
+        userId,
+        quizId: { in: quizIds },
+        status: { in: COMPLETED_STATUSES },
+      },
+    },
+    select: { questionId: true, attempt: { select: { quizId: true, round: true } } },
+  });
+
+  return new Set(
+    rows
+      .filter((row) => row.attempt.round === (rounds.get(row.attempt.quizId) ?? 1))
+      .map((row) => row.questionId),
+  );
+};
+
+// First set that still has questions not covered in this round; null = 100%
+const pickNextSet = (questionIds: string[], completedIds: Set<string>) => {
+  const totalSets = getTotalSets(questionIds.length);
+
+  for (let setNumber = 1; setNumber <= totalSets; setNumber++) {
+    const ids = getSetQuestions(questionIds, setNumber);
+
+    if (ids.some((id) => !completedIds.has(id))) return setNumber;
+  }
+
+  return null;
+};
+
+/* -------------------------------------------------------------------------- */
+/* START                                                                      */
+/* -------------------------------------------------------------------------- */
+
+// Serves the quiz one set (QUESTIONS_PER_SET questions) at a time: resumes the
+// running attempt, otherwise starts the next set the student hasn't finished.
 export const startQuiz = async (quizId: string, userId: string) => {
   const quiz = await prisma.quiz.findUnique({
     where: { id: quizId },
@@ -274,9 +348,31 @@ export const startQuiz = async (quizId: string, userId: string) => {
     throw new AppError(400, "Quiz has no active questions");
   }
 
+  const totalSets = getTotalSets(quiz.questions.length);
+  const [completedIds, rounds] = await Promise.all([
+    getCompletedQuestionIds([quizId], userId),
+    getCurrentRounds([quizId], userId),
+  ]);
+
+  let round = rounds.get(quizId) ?? 1;
+  let setNumber = pickNextSet(
+    quiz.questions.map((q) => q.id),
+    completedIds,
+  );
+
+  // Everything covered (100%): reset progress by starting a new round at set 1
+  if (setNumber === null) {
+    round += 1;
+    setNumber = 1;
+  }
+
+  const questions = getSetQuestions(quiz.questions, setNumber);
+
+  // A quiz-level duration only fits when the whole quiz is a single set
   const durationMinutes =
-    quiz.durationMinutes ??
-    quiz.questions.length * DEFAULT_MINUTES_PER_QUESTION;
+    totalSets === 1 && quiz.durationMinutes
+      ? quiz.durationMinutes
+      : questions.length * DEFAULT_MINUTES_PER_QUESTION;
 
   const snapshot: AttemptSnapshot = {
     quiz: {
@@ -286,8 +382,9 @@ export const startQuiz = async (quizId: string, userId: string) => {
       correctMarks: quiz.correctMarks,
       wrongMarks: quiz.wrongMarks,
       skippedMarks: quiz.skippedMarks,
+      setNumber,
     },
-    questions: quiz.questions.map((q) => ({
+    questions: questions.map((q) => ({
       id: q.id,
       question: q.question,
       explanation: q.explanation,
@@ -305,7 +402,7 @@ export const startQuiz = async (quizId: string, userId: string) => {
 
   const startedAt = new Date();
   const expiresAt = new Date(startedAt.getTime() + durationMinutes * 60_000);
-  const shuffled = shuffle(quiz.questions);
+  const shuffled = shuffle(questions);
 
   const attempt = await prisma.quizAttempt.create({
     data: {
@@ -313,6 +410,8 @@ export const startQuiz = async (quizId: string, userId: string) => {
       userId,
       startedAt,
       expiresAt,
+      setNumber,
+      round,
       questionsSnapshot: snapshot,
       answers: {
         create: shuffled.map((q, index) => ({
@@ -324,6 +423,58 @@ export const startQuiz = async (quizId: string, userId: string) => {
   });
 
   return { resumed: false, ...(await loadAttemptState(attempt.id)) };
+};
+
+/* -------------------------------------------------------------------------- */
+/* PROGRESS                                                                   */
+/* -------------------------------------------------------------------------- */
+
+export type QuizProgress = {
+  totalQuestions: number;
+  completedQuestions: number;
+  completionPercentage: number;
+  totalSets: number;
+  completedSets: number;
+};
+
+// Completion for many quizzes at once (used by the student quiz list):
+// covered questions / total active questions
+export const getQuizzesProgress = async (quizIds: string[], userId: string) => {
+  const progress = new Map<string, QuizProgress>();
+  if (quizIds.length === 0) return progress;
+
+  const [questions, completedIds] = await Promise.all([
+    prisma.question.findMany({
+      where: { quizId: { in: quizIds }, isActive: true },
+      orderBy: { order: "asc" },
+      select: { id: true, quizId: true },
+    }),
+    getCompletedQuestionIds(quizIds, userId),
+  ]);
+
+  const byQuiz = new Map<string, string[]>(quizIds.map((id) => [id, []]));
+  for (const q of questions) byQuiz.get(q.quizId)!.push(q.id);
+
+  for (const [quizId, ids] of byQuiz) {
+    const totalSets = getTotalSets(ids.length);
+    const completedQuestions = ids.filter((id) => completedIds.has(id)).length;
+    let completedSets = 0;
+
+    for (let setNumber = 1; setNumber <= totalSets; setNumber++) {
+      const setIds = getSetQuestions(ids, setNumber);
+      if (setIds.every((id) => completedIds.has(id))) completedSets++;
+    }
+
+    progress.set(quizId, {
+      totalQuestions: ids.length,
+      completedQuestions,
+      completionPercentage: percentage(completedQuestions, ids.length),
+      totalSets,
+      completedSets,
+    });
+  }
+
+  return progress;
 };
 
 /* -------------------------------------------------------------------------- */
@@ -520,6 +671,7 @@ export const getMyAttempts = async (quizId: string, userId: string) => {
   return attempts.map((attempt, index) => ({
     ...formatSummary(attempt),
     attemptNumber: attempts.length - index,
+    setNumber: attempt.setNumber,
     expiresAt: attempt.expiresAt,
   }));
 };
